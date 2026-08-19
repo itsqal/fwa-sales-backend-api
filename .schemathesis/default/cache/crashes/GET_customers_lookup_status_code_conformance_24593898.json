@@ -1,0 +1,81 @@
+{
+  "operation": "GET /customers/lookup",
+  "method": "GET",
+  "path_template": "/customers/lookup",
+  "fingerprint": "24593898",
+  "case_id": "Q6OibJ",
+  "code_sample": "curl -X GET -H 'Authorization: [Filtered]' -H 'X-Service-Key: [Filtered]' http://127.0.0.1:8000/v1/customers/lookup",
+  "sequence": [
+    {
+      "method": "GET",
+      "url": "http://127.0.0.1:8000/v1/customers/lookup",
+      "url_template": "http://127.0.0.1:8000/v1/customers/lookup",
+      "headers": {
+        "User-Agent": "schemathesis/4.24.3",
+        "Accept-Encoding": "gzip, deflate",
+        "Accept": "*/*",
+        "Connection": "keep-alive",
+        "Authorization": "[Filtered]",
+        "X-Service-Key": "[Filtered]",
+        "X-Schemathesis-TestCaseId": "Q6OibJ"
+      },
+      "response": {
+        "status_code": 401,
+        "headers": {
+          "date": "Wed, 19 Aug 2026 08:38:18 GMT",
+          "server": "uvicorn",
+          "content-length": "87",
+          "content-type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"SESSION_REVOKED\",\"message\":\"Your session has ended. Sign in again.\"}}"
+      },
+      "link": null,
+      "checks": [
+        {
+          "name": "status_code_conformance",
+          "status": "failure",
+          "message": "Undocumented HTTP status code\n\nReceived: 401\nDocumented: 200"
+        }
+      ],
+      "meta": {
+        "generation": {
+          "time": 0.0019415999995544553,
+          "mode": "positive"
+        },
+        "components": {
+          "QUERY": "positive"
+        },
+        "phase": {
+          "name": "fuzzing",
+          "data": {
+            "type": "FuzzingPhaseData",
+            "description": "Positive test case",
+            "location": null,
+            "parameter": null,
+            "parameter_location": null,
+            "mutations": []
+          }
+        },
+        "pool_draws": [],
+        "pool_misses": [],
+        "semantic_draws": [],
+        "dictionary_draws": [],
+        "constants_draws": [],
+        "raw_containers": {}
+      },
+      "path": "/customers/lookup",
+      "path_parameters": {},
+      "query": {},
+      "case_headers": {
+        "Authorization": "[Filtered]",
+        "X-Service-Key": "[Filtered]"
+      },
+      "cookies": {},
+      "case_body": {
+        "encoding": "none"
+      },
+      "media_type": null,
+      "parent_index": null
+    }
+  ]
+}

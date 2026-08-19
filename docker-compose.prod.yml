@@ -1,0 +1,65 @@
+# Production stack for a single Ubuntu VPS behind nginx.
+#
+# This is a STANDALONE file, not an override layered on docker-compose.yml. Compose
+# appends `ports` lists when merging rather than replacing them, so a layered override
+# would try to publish the same container port twice and fail. Use it explicitly:
+#
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# Differences from the development stack, all deliberate:
+#   * Nothing binds to a public interface. Both services publish only on 127.0.0.1,
+#     so the internet reaches the API through nginx and reaches PostgreSQL not at all.
+#     This also sidesteps the well-known Docker/ufw interaction where a published port
+#     bypasses the firewall — there is no public publish to bypass it.
+#   * The database password comes from the environment and the stack refuses to start
+#     without one.
+#   * restart: unless-stopped, so a reboot brings the stack back by itself.
+
+services:
+  db:
+    image: postgres:16
+    container_name: fwa_sales_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+      POSTGRES_DB: api_fwa_sales_dev
+    ports:
+      # Localhost only. Needed so pg_dump and psql work from the host; not reachable
+      # from outside the machine.
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d api_fwa_sales_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    container_name: fwa_sales_api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD}@db:5432/api_fwa_sales_dev
+      FILE_STORAGE_DIR: /srv/uploads
+    ports:
+      # nginx proxies to this. Never publish 0.0.0.0 here — TLS terminates at nginx.
+      - "127.0.0.1:8000:8000"
+    volumes:
+      # Attendance selfies survive a redeploy because they live in a volume, not the image.
+      - uploads:/srv/uploads
+    # Migrations run on start. Correct for a single container; if this is ever scaled
+    # past one, move the upgrade to a one-shot job — two containers racing to apply the
+    # same migration is a bad afternoon.
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'"
+
+volumes:
+  pgdata:
+  uploads:

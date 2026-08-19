@@ -1,0 +1,93 @@
+{
+  "operation": "GET /reports/daily-activity",
+  "method": "GET",
+  "path_template": "/reports/daily-activity",
+  "fingerprint": "a0f46094",
+  "case_id": "B5qvyi",
+  "code_sample": "curl -X GET -H 'Authorization: [Filtered]' 'http://127.0.0.1:8000/v1/reports/daily-activity?to=2000-01-01'",
+  "sequence": [
+    {
+      "method": "GET",
+      "url": "http://127.0.0.1:8000/v1/reports/daily-activity?to=2000-01-01",
+      "url_template": "http://127.0.0.1:8000/v1/reports/daily-activity",
+      "headers": {
+        "User-Agent": "schemathesis/4.24.3",
+        "Accept-Encoding": "gzip, deflate",
+        "Accept": "*/*",
+        "Connection": "keep-alive",
+        "Authorization": "[Filtered]",
+        "X-Schemathesis-TestCaseId": "B5qvyi"
+      },
+      "response": {
+        "status_code": 422,
+        "headers": {
+          "date": "Wed, 19 Aug 2026 08:31:58 GMT",
+          "server": "uvicorn",
+          "content-length": "165",
+          "content-type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"INVALID_DATE_RANGE\",\"message\":\"The 'from' date must not be after the 'to' date.\",\"details\":[{\"field\":\"from\",\"issue\":\"must be on or before 'to'\"}]}}"
+      },
+      "link": null,
+      "checks": [
+        {
+          "name": "status_code_conformance",
+          "status": "failure",
+          "message": "Undocumented HTTP status code\n\nReceived: 422\nDocumented: 200"
+        }
+      ],
+      "meta": {
+        "generation": {
+          "time": 0.0007908999687060714,
+          "mode": "positive"
+        },
+        "components": {
+          "QUERY": "positive"
+        },
+        "phase": {
+          "name": "fuzzing",
+          "data": {
+            "type": "FuzzingPhaseData",
+            "description": "Positive test case",
+            "location": null,
+            "parameter": null,
+            "parameter_location": null,
+            "mutations": []
+          }
+        },
+        "pool_draws": [],
+        "pool_misses": [],
+        "semantic_draws": [
+          {
+            "path": [
+              "to"
+            ],
+            "type_token": "string",
+            "format_token": "date",
+            "pattern_hash": null,
+            "normalized_name": "to",
+            "value": "2000-01-01",
+            "source_operation": "GET /reports/summary"
+          }
+        ],
+        "dictionary_draws": [],
+        "constants_draws": [],
+        "raw_containers": {}
+      },
+      "path": "/reports/daily-activity",
+      "path_parameters": {},
+      "query": {
+        "to": "2000-01-01"
+      },
+      "case_headers": {
+        "Authorization": "[Filtered]"
+      },
+      "cookies": {},
+      "case_body": {
+        "encoding": "none"
+      },
+      "media_type": null,
+      "parent_index": null
+    }
+  ]
+}

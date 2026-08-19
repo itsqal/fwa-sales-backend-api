@@ -1,0 +1,90 @@
+[project]
+name = "fwa-sales-ae-api"
+version = "1.0.0"
+description = "Account Executive module API for the HiFi AIR Sales Management Platform (FWA Sales Digitalization)."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30",
+    "alembic>=1.14",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "pyjwt>=2.10",
+    "argon2-cffi>=23.1",
+    "python-multipart>=0.0.20",
+    # zoneinfo has no time zone database to read on Windows. Linux (and the Docker
+    # image) ships one, so this is a developer-machine requirement, not a runtime
+    # dependency of the deployed service.
+    "tzdata>=2024.1; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.28",
+    "schemathesis>=3.38",
+    # Used by the contract-validation step in CLAUDE.md §6.
+    "openapi-spec-validator>=0.7",
+    "pyyaml>=6.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["app", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle
+    "F",    # pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "C4",   # comprehensions
+    "SIM",  # simplify
+    "RUF",
+]
+ignore = [
+    "B008",    # FastAPI dependency defaults are function calls by design
+    "RUF001",  # Field descriptions quote the contract verbatim, en dashes included
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app", "tests"]
+
+[tool.ruff.lint.per-file-ignores]
+"alembic/versions/*" = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["app"]
+strict = true
+plugins = []
+# SQLAlchemy 2.0 declarative attributes are typed via Mapped[...]; untyped decorators
+# from FastAPI routers would otherwise make every endpoint an error.
+disallow_untyped_decorators = false
+
+[[tool.mypy.overrides]]
+module = ["asyncpg.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+# Fixtures and tests must share one event loop, or asyncpg connections opened by a
+# fixture are used from a different loop and fail with "another operation is in
+# progress" — which looks like a concurrency bug and is not one.
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+filterwarnings = ["error::DeprecationWarning:app.*"]

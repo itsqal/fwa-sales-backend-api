@@ -1,0 +1,49 @@
+services:
+  db:
+    image: postgres:16
+    container_name: fwa_sales_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: api_fwa_sales_dev
+    ports:
+      # Host 5433, not 5432: a locally installed PostgreSQL usually already owns 5432,
+      # and the container would fail to bind. Inside the compose network the api
+      # container still reaches this on the normal 5432, so only host tools care.
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d api_fwa_sales_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    container_name: fwa_sales_api
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      # These two override whatever .env says, because .env is written for running the
+      # app directly on the host: the database is a compose service here, not localhost,
+      # and uploads belong on the mounted volume rather than a path inside the image.
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/api_fwa_sales_dev
+      FILE_STORAGE_DIR: /srv/uploads
+    ports:
+      - "8000:8000"
+    volumes:
+      # Attendance selfies live outside the image so a redeploy does not lose them.
+      - uploads:/srv/uploads
+    # Migrations run on start. Safe here because this is a single instance; if the API
+    # is ever scaled to more than one container, move this to a one-shot job — two
+    # containers racing to apply the same migration is a bad afternoon.
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+volumes:
+  pgdata:
+  uploads:

@@ -1,0 +1,86 @@
+{
+  "operation": "POST /internal/ga-events",
+  "method": "POST",
+  "path_template": "/internal/ga-events",
+  "fingerprint": "e55d2699",
+  "case_id": "BG4Cwa",
+  "code_sample": "curl -X POST -H 'Authorization: [Filtered]' -H 'X-Service-Key: [Filtered]' -H 'Content-Type: application/json' -d '{\"events\": []}' http://127.0.0.1:8000/v1/internal/ga-events",
+  "sequence": [
+    {
+      "method": "POST",
+      "url": "http://127.0.0.1:8000/v1/internal/ga-events",
+      "url_template": "http://127.0.0.1:8000/v1/internal/ga-events",
+      "headers": {
+        "User-Agent": "schemathesis/4.24.3",
+        "Accept-Encoding": "gzip, deflate",
+        "Accept": "*/*",
+        "Connection": "keep-alive",
+        "Authorization": "[Filtered]",
+        "X-Service-Key": "[Filtered]",
+        "X-Schemathesis-TestCaseId": "BG4Cwa",
+        "Content-Type": "application/json",
+        "Content-Length": "14"
+      },
+      "response": {
+        "status_code": 422,
+        "headers": {
+          "date": "Wed, 19 Aug 2026 08:29:11 GMT",
+          "server": "uvicorn",
+          "content-length": "214",
+          "content-type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"The request could not be processed. Check the highlighted fields.\",\"details\":[{\"field\":\"events\",\"issue\":\"List should have at least 1 item after validation, not 0\"}]}}"
+      },
+      "link": null,
+      "checks": [
+        {
+          "name": "positive_data_acceptance",
+          "status": "failure",
+          "message": "API rejected schema-compliant request\n\nValid data should have been accepted\nExpected: 2xx, 401, 403, 404, 409, 5xx"
+        }
+      ],
+      "meta": {
+        "generation": {
+          "time": 0.0023580999113619328,
+          "mode": "positive"
+        },
+        "components": {
+          "BODY": "positive"
+        },
+        "phase": {
+          "name": "fuzzing",
+          "data": {
+            "type": "FuzzingPhaseData",
+            "description": "Positive test case",
+            "location": null,
+            "parameter": null,
+            "parameter_location": null,
+            "mutations": []
+          }
+        },
+        "pool_draws": [],
+        "pool_misses": [],
+        "semantic_draws": [],
+        "dictionary_draws": [],
+        "constants_draws": [],
+        "raw_containers": {}
+      },
+      "path": "/internal/ga-events",
+      "path_parameters": {},
+      "query": {},
+      "case_headers": {
+        "Authorization": "[Filtered]",
+        "X-Service-Key": "[Filtered]"
+      },
+      "cookies": {},
+      "case_body": {
+        "encoding": "json",
+        "value": {
+          "events": []
+        }
+      },
+      "media_type": "application/json",
+      "parent_index": null
+    }
+  ]
+}

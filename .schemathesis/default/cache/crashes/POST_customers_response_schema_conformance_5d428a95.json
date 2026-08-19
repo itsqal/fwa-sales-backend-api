@@ -1,0 +1,95 @@
+{
+  "operation": "POST /customers",
+  "method": "POST",
+  "path_template": "/customers",
+  "fingerprint": "5d428a95",
+  "case_id": "yKTOMM",
+  "code_sample": "curl -X POST -H 'Authorization: [Filtered]' -H 'X-Service-Key: [Filtered]' -H 'Idempotency-Key: [Filtered]' -H 'Content-Type: application/json' -d '{\"address\": \"\\u00ef\", \"fullName\": \"\\u008d\", \"latitude\": 2.225073858507e-311, \"longitude\": -1e-05, \"phoneNumber\": \"036880947\", \"status\": \"HOT_LEADS\", \"visitDate\": \"0765-11-28\"}' http://127.0.0.1:8000/v1/customers",
+  "sequence": [
+    {
+      "method": "POST",
+      "url": "http://127.0.0.1:8000/v1/customers",
+      "url_template": "http://127.0.0.1:8000/v1/customers",
+      "headers": {
+        "User-Agent": "schemathesis/4.24.3",
+        "Accept-Encoding": "gzip, deflate",
+        "Accept": "*/*",
+        "Connection": "keep-alive",
+        "Authorization": "[Filtered]",
+        "X-Service-Key": "[Filtered]",
+        "Idempotency-Key": "[Filtered]",
+        "X-Schemathesis-TestCaseId": "yKTOMM",
+        "Content-Type": "application/json",
+        "Content-Length": "175"
+      },
+      "response": {
+        "status_code": 201,
+        "headers": {
+          "date": "Wed, 19 Aug 2026 08:42:15 GMT",
+          "server": "uvicorn",
+          "content-length": "303",
+          "content-type": "application/json"
+        },
+        "body": "{\"customerId\":1000000009,\"fullName\":\"\u008d\",\"phoneNumber\":\"036880947\",\"address\":\"\u00ef\",\"visitDate\":\"0765-11-28\",\"status\":\"HOT_LEADS\",\"geo\":{\"latitude\":2.225073858507e-311,\"longitude\":-0.00001,\"accuracyM\":null,\"verified\":false,\"isMocked\":false},\"hasActivation\":false,\"createdAt\":\"2026-08-19T08:42:15.494813Z\"}"
+      },
+      "link": null,
+      "checks": [
+        {
+          "name": "response_schema_conformance",
+          "status": "failure",
+          "message": "Response violates schema\n\nnull is not of type \"number\"\n\nValidated against the response schema for status code 201.\n\nSchema at /components/schemas/GeoPoint/properties/accuracyM:\n\n    {\n        \"type\": \"number\",\n        \"format\": \"float\"\n    }\n\nValue:\n\n    null"
+        }
+      ],
+      "meta": {
+        "generation": {
+          "time": 0.0019630000460892916,
+          "mode": "positive"
+        },
+        "components": {
+          "HEADER": "positive",
+          "BODY": "positive"
+        },
+        "phase": {
+          "name": "fuzzing",
+          "data": {
+            "type": "FuzzingPhaseData",
+            "description": "Positive test case",
+            "location": null,
+            "parameter": null,
+            "parameter_location": null,
+            "mutations": []
+          }
+        },
+        "pool_draws": [],
+        "pool_misses": [],
+        "semantic_draws": [],
+        "dictionary_draws": [],
+        "constants_draws": [],
+        "raw_containers": {}
+      },
+      "path": "/customers",
+      "path_parameters": {},
+      "query": {},
+      "case_headers": {
+        "Authorization": "[Filtered]",
+        "X-Service-Key": "[Filtered]",
+        "Idempotency-Key": "[Filtered]"
+      },
+      "cookies": {},
+      "case_body": {
+        "encoding": "json",
+        "value": {
+          "address": "\u00ef",
+          "fullName": "\u008d",
+          "latitude": 2.225073858507e-311,
+          "longitude": -1e-05,
+          "phoneNumber": "036880947",
+          "status": "HOT_LEADS",
+          "visitDate": "0765-11-28"
+        }
+      },
+      "media_type": "application/json",
+      "parent_index": null
+    }
+  ]
+}

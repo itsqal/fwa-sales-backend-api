@@ -1,0 +1,81 @@
+{
+  "operation": "GET /reports/daily-activity",
+  "method": "GET",
+  "path_template": "/reports/daily-activity",
+  "fingerprint": "b88533ba",
+  "case_id": "t21xUT",
+  "code_sample": "curl -X GET -H 'Authorization: [Filtered]' -H 'X-Service-Key: [Filtered]' http://127.0.0.1:8000/v1/reports/daily-activity",
+  "sequence": [
+    {
+      "method": "GET",
+      "url": "http://127.0.0.1:8000/v1/reports/daily-activity",
+      "url_template": "http://127.0.0.1:8000/v1/reports/daily-activity",
+      "headers": {
+        "User-Agent": "schemathesis/4.24.3",
+        "Accept-Encoding": "gzip, deflate",
+        "Accept": "*/*",
+        "Connection": "keep-alive",
+        "Authorization": "[Filtered]",
+        "X-Service-Key": "[Filtered]",
+        "X-Schemathesis-TestCaseId": "t21xUT"
+      },
+      "response": {
+        "status_code": 401,
+        "headers": {
+          "date": "Wed, 19 Aug 2026 08:38:18 GMT",
+          "server": "uvicorn",
+          "content-length": "87",
+          "content-type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"SESSION_REVOKED\",\"message\":\"Your session has ended. Sign in again.\"}}"
+      },
+      "link": null,
+      "checks": [
+        {
+          "name": "status_code_conformance",
+          "status": "failure",
+          "message": "Undocumented HTTP status code\n\nReceived: 401\nDocumented: 200, 422"
+        }
+      ],
+      "meta": {
+        "generation": {
+          "time": 0.0016780999721959233,
+          "mode": "positive"
+        },
+        "components": {
+          "QUERY": "positive"
+        },
+        "phase": {
+          "name": "fuzzing",
+          "data": {
+            "type": "FuzzingPhaseData",
+            "description": "Positive test case",
+            "location": null,
+            "parameter": null,
+            "parameter_location": null,
+            "mutations": []
+          }
+        },
+        "pool_draws": [],
+        "pool_misses": [],
+        "semantic_draws": [],
+        "dictionary_draws": [],
+        "constants_draws": [],
+        "raw_containers": {}
+      },
+      "path": "/reports/daily-activity",
+      "path_parameters": {},
+      "query": {},
+      "case_headers": {
+        "Authorization": "[Filtered]",
+        "X-Service-Key": "[Filtered]"
+      },
+      "cookies": {},
+      "case_body": {
+        "encoding": "none"
+      },
+      "media_type": null,
+      "parent_index": null
+    }
+  ]
+}

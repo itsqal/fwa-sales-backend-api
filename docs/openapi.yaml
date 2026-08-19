@@ -1,0 +1,1228 @@
+openapi: 3.1.0
+
+info:
+  title: FWA Sales Digitalization — Account Executive API
+  version: 1.0.0-draft
+  summary: Backend contract for the HiFi AIR Account Executive mobile application.
+  description: |
+    Backend API for the **Account Executive (AE)** module of the HiFi AIR Sales
+    Management Platform.
+
+    ## Scope
+    AE activities only. GSE / DSE / DSF flows — including Open New Outlet (ONO)
+    and Gadget Store sell-in — are explicitly **out of scope** for this contract.
+
+    ## The AE flow this API serves
+    1. **Login** with an HQ-issued AE code (case-insensitive).
+    2. **Register a prospect** during door-to-door activity — name, phone,
+       address, GPS, and an interaction status of `EDUKASI`, `HOT_LEADS`
+       or `PURCHASE`.
+    3. **Activate a customer** — scan the MSISDN barcode on the HiFi AIR box.
+       The server resolves ICCID / IMEI / modem type from inventory; the client
+       never supplies them.
+    4. **Track performance** — activations, incentive, new customers, hot leads.
+
+    ## Conventions
+    * All timestamps are RFC 3339 with offset. The **server** is authoritative
+      on time; `deviceTime` is recorded for audit but never trusted.
+    * The AE identity always comes from the JWT. No endpoint accepts an
+      `aeId` in a request body — a client cannot write on another AE's behalf.
+    * Money is IDR in whole rupiah as an integer. The UI renders
+      "Insentif 242" as hundreds of thousands; that scaling is presentation-only.
+    * MSISDNs are normalised to `62` country-code form. A barcode scanned as
+      `085882724305` must be sent as `6285882724305`.
+    * Every `POST` that creates a record accepts an `Idempotency-Key` header so
+      the mobile offline outbox can retry safely without creating duplicates.
+
+  contact:
+    name: FWA Sales Digitalization Project
+  license:
+    name: Proprietary — Indosat Ooredoo Hutchison
+
+servers:
+  - url: https://api.fwa-sales.dev/v1
+    description: Development
+  - url: http://localhost:4010/v1
+    description: Local Prism mock (prism mock openapi.yaml)
+
+tags:
+  - name: Auth
+    description: Login, token refresh, and profile.
+  - name: Customers
+    description: Prospect registration and lists. Backs *Input New Customer*, *Daftar New Customer*, *Daftar Hot Leads*.
+  - name: Inventory
+    description: MSISDN lookup for the barcode scanner.
+  - name: Activations
+    description: Customer activation. Backs *Aktivasi Pelanggan* and *Daftar Aktivasi*.
+  - name: Attendance
+    description: Daily check-in / check-out (CICO).
+  - name: Reports
+    description: Home dashboard and the Report screen.
+  - name: Sync
+    description: Offline bootstrap for the mobile client.
+  - name: Files
+    description: Short-lived signed delivery of private uploads.
+  - name: Internal
+    description: Server-to-server. Not reachable by the mobile app.
+
+security:
+  - bearerAuth: []
+
+paths:
+
+  # ===================================================================
+  # AUTH
+  # ===================================================================
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Log in with AE code and password
+      description: |
+        AE credentials are created and distributed by IOH HQ. The AE code is
+        matched **case-insensitively** — `AE-SIDOARJO1`, `ae-sidoarjo1` and
+        `Ae-SidoArjo1` are the same account.
+      security: []
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [aeCode, password]
+              properties:
+                aeCode:
+                  type: string
+                  examples: ["AE-BENGKULU1"]
+                password:
+                  type: string
+                  format: password
+                deviceLabel:
+                  type: string
+                  description: Free-text device identifier, stored against the refresh token.
+                  examples: ["Samsung A15 / android-14"]
+      responses:
+        "200":
+          description: Authenticated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthTokens" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Exchange a refresh token for a new access token
+      security: []
+      operationId: refreshToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken: { type: string }
+      responses:
+        "200":
+          description: Refreshed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthTokens" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Revoke the current refresh token
+      operationId: logout
+      responses:
+        "204": { description: Logged out }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /me:
+    get:
+      tags: [Auth]
+      summary: Profile of the signed-in AE
+      description: Supplies the read-only "ID AE" field shown on every input form.
+      operationId: getMe
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountExecutive" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  # ===================================================================
+  # CUSTOMERS
+  # ===================================================================
+  /customers:
+    get:
+      tags: [Customers]
+      summary: List prospects registered by this AE
+      description: |
+        Backs both **Daftar New Customer** and **Daftar Hot Leads** — the Hot
+        Leads screen is this endpoint with `status=HOT_LEADS`.
+
+        The UI's "7 Hari Terakhir" chip maps to `period=7d`. An explicit
+        `from`/`to` pair overrides `period`.
+      operationId: listCustomers
+      parameters:
+        - $ref: "#/components/parameters/Period"
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - name: status
+          in: query
+          description: Filter by interaction status. Repeat for multiple values.
+          schema:
+            type: array
+            items: { $ref: "#/components/schemas/CustomerStatus" }
+          style: form
+          explode: true
+        - name: q
+          in: query
+          description: Free-text search over name and phone number.
+          schema: { type: string }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Paginated"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/Customer" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/DateRangeError" }
+
+    post:
+      tags: [Customers]
+      summary: Register a new prospect
+      description: |
+        Backs the **Input New Customer** form. `aeId` is taken from the JWT and
+        must not be sent.
+
+        The server records `isMocked` but does **not** reject a mocked-location
+        submission — it is flagged for supervisor review instead, so a
+        genuine AE is never blocked in the field by a GPS quirk.
+      operationId: createCustomer
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CustomerCreate" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Customer" }
+        "409":
+          description: |
+            A customer with this phone number is already registered by this AE,
+            or the `Idempotency-Key` was already used with a different payload.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /customers/{customerId}:
+    parameters:
+      - name: customerId
+        in: path
+        required: true
+        schema: { type: integer, format: int64, examples: [1234567890] }
+    get:
+      tags: [Customers]
+      summary: Retrieve one prospect
+      operationId: getCustomer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomerDetail" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Customers]
+      summary: Update a prospect
+      description: |
+        Chiefly used to move a lead along the funnel — `HOT_LEADS` → `PURCHASE`.
+        Every status change is written to `customer_status_history`, which is
+        what makes conversion rate measurable later.
+      operationId: updateCustomer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                fullName: { type: string }
+                phoneNumber: { type: string }
+                address: { type: string }
+                status: { $ref: "#/components/schemas/CustomerStatus" }
+                statusNote: { type: string }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomerDetail" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /customers/lookup:
+    get:
+      tags: [Customers]
+      summary: Typeahead source for the "ID Customer" dropdown
+      description: |
+        Lightweight list used by the activation form's customer selector, which
+        renders each option as `{customerId} - {fullName}`. Returns only
+        customers belonging to the signed-in AE.
+      operationId: lookupCustomers
+      parameters:
+        - name: q
+          in: query
+          schema: { type: string }
+        - name: excludeActivated
+          in: query
+          description: Omit customers that already have an activation.
+          schema: { type: boolean, default: true }
+        - name: limit
+          in: query
+          # `minimum` added 2026-08-19: without it a negative limit was a
+          # schema-compliant request that the server could only reject with a 422.
+          schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        customerId: { type: integer, format: int64, examples: [1234567890] }
+                        fullName:   { type: string, examples: ["Susanto"] }
+                        label:      { type: string, examples: ["1234567890 - Susanto"] }
+
+  # ===================================================================
+  # INVENTORY  (barcode scanner)
+  # ===================================================================
+  /inventory/msisdn/{msisdn}:
+    get:
+      tags: [Inventory]
+      summary: Resolve a scanned MSISDN to its bundled device
+      description: |
+        Called the moment the barcode scanner reads a number. This is what
+        populates the read-only **IMEI** and **Tipe Modem** fields on the
+        activation form.
+
+        `eligible` is the field the client should gate the submit button on.
+        It is `false` when the MSISDN is not allocated to this AE, has already
+        been sold, or is blocked — with a machine-readable `reason`.
+      operationId: lookupMsisdn
+      parameters:
+        - name: msisdn
+          in: path
+          required: true
+          description: Normalised to 62 form before the call.
+          schema: { type: string, pattern: '^62[0-9]{8,13}$', examples: ["6285882724305"] }
+      responses:
+        "200":
+          description: Found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InventoryItem" }
+        "404":
+          description: MSISDN is not a registered FWA number.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /inventory/me:
+    get:
+      tags: [Inventory]
+      summary: Stock allocated to this AE
+      description: Lets the app show remaining stock and work offline after a bootstrap sync.
+      operationId: listMyInventory
+      parameters:
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/InventoryStatus" }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Paginated"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/InventoryItem" }
+
+  # ===================================================================
+  # ACTIVATIONS
+  # ===================================================================
+  /activations:
+    get:
+      tags: [Activations]
+      summary: List activations submitted by this AE
+      description: |
+        Backs **Daftar Aktivasi**. The `Activated` / `Not Activated` badge is
+        the `status` field; `activationDate` is populated only once the Gross
+        Add feed confirms the SIM went live.
+      operationId: listActivations
+      parameters:
+        - $ref: "#/components/parameters/Period"
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - name: status
+          in: query
+          schema:
+            type: array
+            items: { $ref: "#/components/schemas/ActivationStatus" }
+          style: form
+          explode: true
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Paginated"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/Activation" }
+        "422": { $ref: "#/components/responses/DateRangeError" }
+
+    post:
+      tags: [Activations]
+      summary: Submit a customer activation
+      description: |
+        Backs the **Aktivasi Pelanggan** form.
+
+        The client sends only the customer, the scanned MSISDN, and the GPS fix.
+        IMEI and modem type are resolved server-side from `fwa_inventory` and
+        snapshotted onto the activation record — a client is never trusted to
+        assert which device a MSISDN is bundled with.
+
+        Created with `status: NOT_ACTIVATED`. The GA reconciliation job flips it
+        to `ACTIVATED` and stamps `activationDate`.
+      operationId: createActivation
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ActivationCreate" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Activation" }
+        "409":
+          description: This MSISDN has already been activated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                alreadySold:
+                  value:
+                    error:
+                      code: MSISDN_ALREADY_ACTIVATED
+                      message: "MSISDN 6285882724305 was already activated on 2026-08-11."
+        "422":
+          description: |
+            Validation failed — commonly `MSISDN_NOT_ALLOCATED` (the number is
+            not in this AE's stock) or `CUSTOMER_NOT_OWNED`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /activations/{activationId}:
+    get:
+      tags: [Activations]
+      summary: Retrieve one activation
+      operationId: getActivation
+      parameters:
+        - name: activationId
+          in: path
+          required: true
+          schema: { type: integer, format: int64, examples: [2987654321] }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Activation" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ===================================================================
+  # ATTENDANCE
+  # ===================================================================
+  /attendance/check-in:
+    post:
+      tags: [Attendance]
+      summary: Daily check-in with selfie and location
+      description: |
+        Multipart because of the mandatory selfie. Compress client-side to
+        roughly 1024px / 70% quality before upload — raw phone photos fail on a
+        field connection.
+
+        A check-in outside the permitted geofence is **accepted** with
+        `approvalStatus: PENDING_APPROVAL` and routed to CSE, matching the UI
+        warning "Lokasi kamu berada di luar jangkauan".
+      operationId: checkIn
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [photo, latitude, longitude]
+              properties:
+                photo:
+                  type: string
+                  format: binary
+                latitude:  { type: number, format: double }
+                longitude: { type: number, format: double }
+                geoAccuracyM: { type: number, format: float }
+                isMocked:  { type: boolean, default: false }
+                note:      { type: string, description: "Catatan (Opsional)" }
+                document:  { type: string, format: binary, description: "Dokumen (Opsional)" }
+                deviceTime: { type: string, format: date-time }
+      responses:
+        "201":
+          description: Checked in
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Attendance" }
+        "409":
+          description: Already checked in today.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /attendance/check-out:
+    post:
+      tags: [Attendance]
+      summary: Daily check-out
+      operationId: checkOut
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [latitude, longitude]
+              properties:
+                latitude:  { type: number, format: double }
+                longitude: { type: number, format: double }
+                isMocked:  { type: boolean, default: false }
+                deviceTime: { type: string, format: date-time }
+      responses:
+        "200":
+          description: Checked out
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Attendance" }
+        "409":
+          description: No open check-in for today.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /attendance/today:
+    get:
+      tags: [Attendance]
+      summary: Today's attendance record
+      operationId: getTodayAttendance
+      responses:
+        "200":
+          description: OK. `null` data means not yet checked in.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    oneOf:
+                      - $ref: "#/components/schemas/Attendance"
+                      - type: "null"
+
+  /attendance:
+    get:
+      tags: [Attendance]
+      summary: Attendance history
+      operationId: listAttendance
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Paginated"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/Attendance" }
+        "422": { $ref: "#/components/responses/DateRangeError" }
+
+  # ===================================================================
+  # REPORTS
+  # ===================================================================
+  /reports/summary:
+    get:
+      tags: [Reports]
+      summary: Headline counters
+      description: |
+        Backs the four tiles on the **Report** screen and the two on **Home** —
+        Total Aktivasi, Insentif, New Customer, Hot Leads.
+
+        `incentiveIdr` is whole rupiah. The UI divides by 100 000 to render
+        "242 Ratus Ribu Rupiah".
+      operationId: getReportSummary
+      parameters:
+        - $ref: "#/components/parameters/Period"
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/ReportSummary" }
+        "422": { $ref: "#/components/responses/DateRangeError" }
+
+  /reports/daily-activity:
+    get:
+      tags: [Reports]
+      summary: Daily series for the home-screen chart
+      description: |
+        One entry per day in range, including days with zero activity so the
+        chart keeps an unbroken axis. `target` supplies the grey benchmark bars
+        behind the pink actual bars.
+      operationId: getDailyActivity
+      parameters:
+        - $ref: "#/components/parameters/Period"
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/DailyActivity" }
+        "422": { $ref: "#/components/responses/DateRangeError" }
+
+  /reports/incentives:
+    get:
+      tags: [Reports]
+      summary: Incentive ledger for this AE
+      operationId: listIncentives
+      parameters:
+        - name: periodYm
+          in: query
+          schema: { type: string, pattern: '^[0-9]{4}-[0-9]{2}$', examples: ["2026-08"] }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Paginated"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/IncentiveEntry" }
+
+  # ===================================================================
+  # SYNC
+  # ===================================================================
+  /sync/bootstrap:
+    get:
+      tags: [Sync]
+      summary: One-shot payload to prime the offline cache
+      description: |
+        Called on login and on pull-to-refresh. Everything the app needs to keep
+        functioning without a connection: profile, allocated stock, recent
+        customers, and the server clock for drift correction.
+      operationId: syncBootstrap
+      parameters:
+        - name: since
+          in: query
+          description: Return only records changed after this instant.
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  serverTime: { type: string, format: date-time }
+                  profile:    { $ref: "#/components/schemas/AccountExecutive" }
+                  inventory:
+                    type: array
+                    items: { $ref: "#/components/schemas/InventoryItem" }
+                  customers:
+                    type: array
+                    items: { $ref: "#/components/schemas/Customer" }
+
+  # ===================================================================
+  # FILES
+  #
+  # ADDED 2026-08-19, during implementation. `Attendance.checkInPhotoUrl` has to
+  # resolve to something, and the security rules require that something to be a
+  # short-lived signed URL rather than a public bucket path — so the contract
+  # implied an endpoint it did not declare. This is that endpoint.
+  #
+  # No bearer auth by design: the token *is* the authorisation. It expires in
+  # minutes and is only ever handed to the AE who owns the record, which is what
+  # lets an <img src> load the photo without an Authorization header.
+  # ===================================================================
+  /files/{token}:
+    get:
+      tags: [Files]
+      summary: Fetch a private file with a short-lived signed token
+      description: |
+        Serves an attendance selfie or document. The token is an HMAC-signed,
+        time-limited reference minted by the server when it returns an
+        `Attendance` record.
+
+        Treat the URL as perishable: re-fetch the attendance record rather than
+        caching the link.
+      operationId: getFile
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          description: Opaque signed token from `checkInPhotoUrl` or `documentUrl`.
+          schema: { type: string }
+      responses:
+        "200":
+          description: The file
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+            image/jpeg:
+              schema: { type: string, format: binary }
+        "404":
+          description: |
+            Token invalid, expired, or the file is unknown. These are deliberately
+            not distinguished — separate answers would make this an oracle for
+            which storage keys exist.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  # ===================================================================
+  # INTERNAL
+  # ===================================================================
+  /internal/ga-events:
+    post:
+      tags: [Internal]
+      summary: Ingest Gross Add events from GCP
+      description: |
+        Server-to-server. Flips matching activations to `ACTIVATED` and stamps
+        `activationDate` (the brief's "GA Date — Automatic from GCP"). Also the
+        trigger for incentive accrual.
+
+        Not reachable with an AE token; requires a service credential.
+      operationId: ingestGaEvents
+      security:
+        - serviceAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [events]
+              properties:
+                events:
+                  type: array
+                  items:
+                    type: object
+                    required: [msisdn, activationDate]
+                    properties:
+                      msisdn:         { type: string }
+                      activationDate: { type: string, format: date-time }
+                      outcome:
+                        type: string
+                        enum: [ACTIVATED, FAILED]
+                        default: ACTIVATED
+      responses:
+        "202":
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  matched:   { type: integer }
+                  unmatched: { type: integer }
+        "403":
+          description: Missing or invalid service credential.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+# =====================================================================
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Short-lived access token from `/auth/login`.
+    serviceAuth:
+      type: apiKey
+      in: header
+      name: X-Service-Key
+      description: Shared secret for server-to-server calls.
+
+  parameters:
+    Period:
+      name: period
+      in: query
+      description: Relative window. Ignored when `from`/`to` are supplied.
+      schema:
+        type: string
+        enum: ["7d", "30d", "mtd", "ytd"]
+        default: "7d"
+    From:
+      name: from
+      in: query
+      schema: { type: string, format: date }
+    To:
+      name: to
+      in: query
+      schema: { type: string, format: date }
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    PerPage:
+      name: perPage
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: |
+        Client-generated UUID. Replaying the same key with the same payload
+        returns the original resource instead of creating a duplicate — this is
+        what makes the mobile offline outbox safe to retry.
+      schema: { type: string, format: uuid }
+
+  responses:
+    Unauthorized:
+      description: Missing, expired, or invalid token.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Resource does not exist, or does not belong to this AE.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    ValidationError:
+      description: Request failed validation.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    DateRangeError:
+      description: |
+        ADDED 2026-08-19. Every endpoint taking `from`/`to` returns
+        `422 INVALID_DATE_RANGE` when `from` is later than `to`. The two
+        parameters are individually valid dates, so nothing rejects the pair
+        until the server compares them — which made this an undeclared status
+        code on an otherwise schema-compliant request. Documented rather than
+        silently swapped, because a reversed range is a client bug and quietly
+        "fixing" it would hide one.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          examples:
+            reversedRange:
+              value:
+                error:
+                  code: INVALID_DATE_RANGE
+                  message: "The 'from' date must not be after the 'to' date."
+    TooManyRequests:
+      description: Rate limit exceeded.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: Stable machine-readable identifier. Never localised.
+              examples: ["MSISDN_NOT_ALLOCATED"]
+            message:
+              type: string
+              description: Human-readable, safe to show to the AE.
+            details:
+              type: array
+              items:
+                type: object
+                properties:
+                  field:  { type: string }
+                  issue:  { type: string }
+
+    Paginated:
+      type: object
+      properties:
+        data:
+          type: array
+          items: {}
+        meta:
+          type: object
+          properties:
+            page:       { type: integer }
+            perPage:    { type: integer }
+            total:      { type: integer }
+            totalPages: { type: integer }
+
+    AuthTokens:
+      type: object
+      properties:
+        accessToken:  { type: string }
+        refreshToken: { type: string }
+        expiresIn:
+          type: integer
+          description: Access-token lifetime in seconds.
+          examples: [900]
+        mustChangePassword:
+          type: boolean
+          description: True on first login with an HQ-issued password.
+        profile: { $ref: "#/components/schemas/AccountExecutive" }
+
+    AccountExecutive:
+      type: object
+      properties:
+        aeId:     { type: string, format: uuid }
+        aeCode:   { type: string, examples: ["AE-BENGKULU1"] }
+        fullName: { type: string, examples: ["Hendra Jaya"] }
+        role:     { type: string, const: "AE" }
+        region:
+          type: object
+          properties:
+            regionCode: { type: string, examples: ["BENGKULU"] }
+            regionName: { type: string, examples: ["Bengkulu"] }
+        mpxCode:  { type: string }
+        workShift:
+          type: object
+          properties:
+            start: { type: string, examples: ["08:00"] }
+            end:   { type: string, examples: ["18:00"] }
+        status:
+          type: string
+          enum: [ACTIVE, SUSPENDED, INACTIVE]
+
+    CustomerStatus:
+      type: string
+      description: |
+        Interaction outcome, i-Sales taxonomy.
+        * `EDUKASI` — customer educated, no purchase intent yet
+        * `HOT_LEADS` — high intent, needs follow-up
+        * `PURCHASE` — agreed to buy
+
+        The Digital Solution Description names the same concept
+        Potential / Sell In / Non-Potential. The i-Sales taxonomy above is
+        authoritative for this build.
+      enum: [EDUKASI, HOT_LEADS, PURCHASE]
+
+    GeoPoint:
+      type: object
+      required: [latitude, longitude]
+      properties:
+        latitude:     { type: number, format: double, minimum: -90,  maximum: 90 }
+        longitude:    { type: number, format: double, minimum: -180, maximum: 180 }
+        accuracyM:    { type: number, format: float }
+        verified:
+          type: boolean
+          description: Server-side check passed — accuracy within tolerance and not mocked.
+        isMocked:
+          type: boolean
+          description: |
+            Android reported a mock-location provider. Recorded and flagged for
+            review, never used to silently reject a submission.
+
+    CustomerCreate:
+      type: object
+      required: [visitDate, fullName, phoneNumber, address, latitude, longitude, status]
+      properties:
+        visitDate:
+          type: string
+          format: date
+          description: '"Tanggal Pergi" — the day the AE visited.'
+        fullName:    { type: string, maxLength: 150, examples: ["Susanto"] }
+        phoneNumber:
+          type: string
+          pattern: '^(62|0)[0-9]{8,13}$'
+          examples: ["082234567890"]
+        address:     { type: string, examples: ["Jl. Kebahagiaan No. 12"] }
+        latitude:    { type: number, format: double, examples: [-6.2314728] }
+        longitude:   { type: number, format: double, examples: [106.9348415] }
+        geoAccuracyM: { type: number, format: float }
+        isMocked:    { type: boolean, default: false }
+        status:      { $ref: "#/components/schemas/CustomerStatus" }
+        deviceTime:  { type: string, format: date-time }
+
+    Customer:
+      type: object
+      properties:
+        customerId:  { type: integer, format: int64, examples: [1234567890] }
+        fullName:    { type: string, examples: ["Susanto"] }
+        phoneNumber: { type: string, examples: ["082234567890"] }
+        address:     { type: string }
+        visitDate:   { type: string, format: date }
+        status:      { $ref: "#/components/schemas/CustomerStatus" }
+        geo:         { $ref: "#/components/schemas/GeoPoint" }
+        hasActivation:
+          type: boolean
+          description: Convenience flag so the list can hide already-activated customers.
+        createdAt:   { type: string, format: date-time }
+
+    CustomerDetail:
+      allOf:
+        - $ref: "#/components/schemas/Customer"
+        - type: object
+          properties:
+            statusHistory:
+              type: array
+              items:
+                type: object
+                properties:
+                  oldStatus: { $ref: "#/components/schemas/CustomerStatus" }
+                  newStatus: { $ref: "#/components/schemas/CustomerStatus" }
+                  note:      { type: string }
+                  changedAt: { type: string, format: date-time }
+            activations:
+              type: array
+              items: { $ref: "#/components/schemas/Activation" }
+
+    InventoryStatus:
+      type: string
+      enum: [AVAILABLE, ALLOCATED, CONSUMED, ACTIVATED, RETURNED, BLOCKED]
+
+    InventoryItem:
+      type: object
+      properties:
+        msisdn: { type: string, examples: ["6285882724305"] }
+        iccid:  { type: string, examples: ["8962010000203921317"] }
+        imei:   { type: string, examples: ["355806671396654"] }
+        deviceModel:
+          type: object
+          properties:
+            modelCode: { type: string, examples: ["HKM 127+"] }
+            brand:     { type: string, examples: ["HKM"] }
+        status: { $ref: "#/components/schemas/InventoryStatus" }
+        eligible:
+          type: boolean
+          description: Whether this AE may activate this MSISDN right now.
+        reason:
+          type: string
+          description: Populated only when `eligible` is false.
+          enum: [NOT_ALLOCATED_TO_YOU, ALREADY_ACTIVATED, BLOCKED, RETURNED]
+
+    ActivationStatus:
+      type: string
+      description: |
+        * `NOT_ACTIVATED` — submitted, SIM not yet live (red badge)
+        * `ACTIVATED` — Gross Add confirmed (green badge)
+        * `FAILED` — GA feed reported activation failure
+      enum: [NOT_ACTIVATED, ACTIVATED, FAILED, CANCELLED]
+
+    ActivationCreate:
+      type: object
+      required: [customerId, msisdn, latitude, longitude]
+      properties:
+        customerId: { type: integer, format: int64, examples: [1234567890] }
+        msisdn:
+          type: string
+          pattern: '^62[0-9]{8,13}$'
+          description: Scanned from the box barcode, normalised to 62 form.
+          examples: ["6285882724305"]
+        latitude:   { type: number, format: double }
+        longitude:  { type: number, format: double }
+        geoAccuracyM: { type: number, format: float }
+        isMocked:   { type: boolean, default: false }
+        deviceTime: { type: string, format: date-time }
+
+    Activation:
+      type: object
+      properties:
+        activationId: { type: integer, format: int64, examples: [2987654321] }
+        customer:
+          type: object
+          properties:
+            customerId: { type: integer, format: int64, examples: [1234567890] }
+            fullName:   { type: string, examples: ["Susanto"] }
+        msisdn:      { type: string, examples: ["6289999999990"] }
+        imei:        { type: string, examples: ["355806671396654"] }
+        deviceModelCode: { type: string, examples: ["HKM 127+"] }
+        geo:         { $ref: "#/components/schemas/GeoPoint" }
+        submittedAt: { type: string, format: date-time }
+        status:      { $ref: "#/components/schemas/ActivationStatus" }
+        activationDate:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: "null"
+          description: GA Date. Null until the Gross Add feed confirms.
+
+    Attendance:
+      type: object
+      properties:
+        attendanceId:   { type: string, format: uuid }
+        attendanceDate: { type: string, format: date }
+        checkInAt:      { type: string, format: date-time }
+        checkInPhotoUrl: { type: string, format: uri }
+        checkInGeo:     { $ref: "#/components/schemas/GeoPoint" }
+        checkInAddress: { type: string }
+        withinGeofence: { type: boolean }
+        checkOutAt:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: "null"
+        note:           { type: string }
+        documentUrl:    { type: string, format: uri }
+        approvalStatus:
+          type: string
+          enum: [AUTO_APPROVED, PENDING_APPROVAL, APPROVED, REJECTED]
+
+    ReportSummary:
+      type: object
+      properties:
+        periodFrom:  { type: string, format: date }
+        periodTo:    { type: string, format: date }
+        totalActivations:
+          type: integer
+          description: '"Total Aktivasi" tile.'
+          examples: [120]
+        activatedCount:
+          type: integer
+          description: Subset confirmed live by the GA feed.
+        notActivatedCount: { type: integer }
+        newCustomers:
+          type: integer
+          description: '"New Customer" tile.'
+          examples: [118]
+        hotLeads:
+          type: integer
+          description: '"Hot Leads" tile.'
+          examples: [90]
+        incentiveIdr:
+          type: integer
+          format: int64
+          description: '"Insentif" tile, in whole rupiah.'
+          examples: [24200000]
+        conversionRate:
+          type: number
+          format: float
+          description: activatedCount / newCustomers, 0–1.
+
+    DailyActivity:
+      type: object
+      properties:
+        date:         { type: string, format: date }
+        activations:  { type: integer, description: Pink bar. }
+        target:       { type: integer, description: Grey benchmark bar. }
+        newCustomers: { type: integer }
+        hotLeads:     { type: integer }
+
+    IncentiveEntry:
+      type: object
+      properties:
+        ledgerId:     { type: integer, format: int64 }
+        activationId:
+          oneOf:
+            - type: integer
+              format: int64
+            - type: "null"
+        ruleName:     { type: string, examples: ["Activation bonus — Aug 2026"] }
+        amountIdr:    { type: integer, format: int64, examples: [50000] }
+        earnedDate:   { type: string, format: date }
+        periodYm:     { type: string, examples: ["2026-08"] }
+        status:
+          type: string
+          enum: [ACCRUED, APPROVED, PAID, VOID]

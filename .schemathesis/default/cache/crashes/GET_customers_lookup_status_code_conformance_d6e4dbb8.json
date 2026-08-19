@@ -1,0 +1,83 @@
+{
+  "operation": "GET /customers/lookup",
+  "method": "GET",
+  "path_template": "/customers/lookup",
+  "fingerprint": "d6e4dbb8",
+  "case_id": "D9aqRw",
+  "code_sample": "curl -X GET -H 'Authorization: [Filtered]' -H 'X-Service-Key: [Filtered]' 'http://127.0.0.1:8000/v1/customers/lookup?limit=-11613898474'",
+  "sequence": [
+    {
+      "method": "GET",
+      "url": "http://127.0.0.1:8000/v1/customers/lookup?limit=-11613898474",
+      "url_template": "http://127.0.0.1:8000/v1/customers/lookup",
+      "headers": {
+        "User-Agent": "schemathesis/4.24.3",
+        "Accept-Encoding": "gzip, deflate",
+        "Accept": "*/*",
+        "Connection": "keep-alive",
+        "Authorization": "[Filtered]",
+        "X-Service-Key": "[Filtered]",
+        "X-Schemathesis-TestCaseId": "D9aqRw"
+      },
+      "response": {
+        "status_code": 422,
+        "headers": {
+          "date": "Wed, 19 Aug 2026 08:42:17 GMT",
+          "server": "uvicorn",
+          "content-length": "199",
+          "content-type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"The request could not be processed. Check the highlighted fields.\",\"details\":[{\"field\":\"limit\",\"issue\":\"Input should be greater than or equal to 1\"}]}}"
+      },
+      "link": null,
+      "checks": [
+        {
+          "name": "status_code_conformance",
+          "status": "failure",
+          "message": "Undocumented HTTP status code\n\nReceived: 422\nDocumented: 200"
+        }
+      ],
+      "meta": {
+        "generation": {
+          "time": 0.0007160999812185764,
+          "mode": "positive"
+        },
+        "components": {
+          "QUERY": "positive"
+        },
+        "phase": {
+          "name": "fuzzing",
+          "data": {
+            "type": "FuzzingPhaseData",
+            "description": "Positive test case",
+            "location": null,
+            "parameter": null,
+            "parameter_location": null,
+            "mutations": []
+          }
+        },
+        "pool_draws": [],
+        "pool_misses": [],
+        "semantic_draws": [],
+        "dictionary_draws": [],
+        "constants_draws": [],
+        "raw_containers": {}
+      },
+      "path": "/customers/lookup",
+      "path_parameters": {},
+      "query": {
+        "limit": -11613898474
+      },
+      "case_headers": {
+        "Authorization": "[Filtered]",
+        "X-Service-Key": "[Filtered]"
+      },
+      "cookies": {},
+      "case_body": {
+        "encoding": "none"
+      },
+      "media_type": null,
+      "parent_index": null
+    }
+  ]
+}

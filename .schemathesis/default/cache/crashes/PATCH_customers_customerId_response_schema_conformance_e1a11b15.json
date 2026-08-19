@@ -1,0 +1,96 @@
+{
+  "operation": "PATCH /customers/{customerId}",
+  "method": "PATCH",
+  "path_template": "/customers/{customerId}",
+  "fingerprint": "e1a11b15",
+  "case_id": "CUAYwS",
+  "code_sample": "curl -X PATCH -H 'Authorization: [Filtered]' -H 'X-Service-Key: [Filtered]' -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:8000/v1/customers/1000000009",
+  "sequence": [
+    {
+      "method": "PATCH",
+      "url": "http://127.0.0.1:8000/v1/customers/1000000009",
+      "url_template": "http://127.0.0.1:8000/v1/customers/{customerId}",
+      "headers": {
+        "User-Agent": "schemathesis/4.24.3",
+        "Accept-Encoding": "gzip, deflate",
+        "Accept": "*/*",
+        "Connection": "keep-alive",
+        "Authorization": "[Filtered]",
+        "X-Service-Key": "[Filtered]",
+        "X-Schemathesis-TestCaseId": "CUAYwS",
+        "Content-Type": "application/json",
+        "Content-Length": "2"
+      },
+      "response": {
+        "status_code": 200,
+        "headers": {
+          "date": "Wed, 19 Aug 2026 08:46:16 GMT",
+          "server": "uvicorn",
+          "content-length": "443",
+          "content-type": "application/json"
+        },
+        "body": "{\"customerId\":1000000009,\"fullName\":\"\u008d\",\"phoneNumber\":\"036880947\",\"address\":\"\u00ef\",\"visitDate\":\"0765-11-28\",\"status\":\"HOT_LEADS\",\"geo\":{\"latitude\":2.225073858507e-311,\"longitude\":-0.00001,\"accuracyM\":null,\"verified\":false,\"isMocked\":false},\"hasActivation\":false,\"createdAt\":\"2026-08-19T08:42:15.494813Z\",\"statusHistory\":[{\"oldStatus\":null,\"newStatus\":\"HOT_LEADS\",\"note\":\"Registered\",\"changedAt\":\"2026-08-19T08:42:15.494813Z\"}],\"activations\":[]}"
+      },
+      "link": null,
+      "checks": [
+        {
+          "name": "response_schema_conformance",
+          "status": "failure",
+          "message": "Response violates schema\n\nnull is not one of \"EDUKASI\", \"HOT_LEADS\" or \"PURCHASE\"\n\nValidated against the response schema for status code 200.\n\nSchema at /components/schemas/CustomerStatus:\n\n    {\n        \"enum\": [\n            \"EDUKASI\",\n            \"HOT_LEADS\",\n            \"PURCHASE\"\n        ],\n        \"type\": \"string\",\n        \"description\": \"Interaction outcome, i-Sales taxonomy.\\n* `EDUKASI` \\u201...\n    }\n\nValue:\n\n    null"
+        }
+      ],
+      "meta": {
+        "generation": {
+          "time": 0.004148000036366284,
+          "mode": "positive"
+        },
+        "components": {
+          "PATH": "positive",
+          "BODY": "positive"
+        },
+        "phase": {
+          "name": "fuzzing",
+          "data": {
+            "type": "FuzzingPhaseData",
+            "description": "Positive test case",
+            "location": null,
+            "parameter": null,
+            "parameter_location": null,
+            "mutations": []
+          }
+        },
+        "pool_draws": [
+          {
+            "location": "path",
+            "parameter_name": "customerId",
+            "resource_name": "Customer",
+            "resource_field": "customerId",
+            "source_operation": "POST /customers",
+            "source_status": 201
+          }
+        ],
+        "pool_misses": [],
+        "semantic_draws": [],
+        "dictionary_draws": [],
+        "constants_draws": [],
+        "raw_containers": {}
+      },
+      "path": "/customers/{customerId}",
+      "path_parameters": {
+        "customerId": 1000000009
+      },
+      "query": {},
+      "case_headers": {
+        "Authorization": "[Filtered]",
+        "X-Service-Key": "[Filtered]"
+      },
+      "cookies": {},
+      "case_body": {
+        "encoding": "json",
+        "value": {}
+      },
+      "media_type": "application/json",
+      "parent_index": null
+    }
+  ]
+}

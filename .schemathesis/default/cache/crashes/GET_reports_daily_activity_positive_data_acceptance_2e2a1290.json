@@ -1,0 +1,93 @@
+{
+  "operation": "GET /reports/daily-activity",
+  "method": "GET",
+  "path_template": "/reports/daily-activity",
+  "fingerprint": "2e2a1290",
+  "case_id": "Hv6GGD",
+  "code_sample": "curl -X GET -H 'Authorization: [Filtered]' 'http://127.0.0.1:8000/v1/reports/daily-activity?to=0005-07-25'",
+  "sequence": [
+    {
+      "method": "GET",
+      "url": "http://127.0.0.1:8000/v1/reports/daily-activity?to=0005-07-25",
+      "url_template": "http://127.0.0.1:8000/v1/reports/daily-activity",
+      "headers": {
+        "User-Agent": "schemathesis/4.24.3",
+        "Accept-Encoding": "gzip, deflate",
+        "Accept": "*/*",
+        "Connection": "keep-alive",
+        "Authorization": "[Filtered]",
+        "X-Schemathesis-TestCaseId": "Hv6GGD"
+      },
+      "response": {
+        "status_code": 422,
+        "headers": {
+          "date": "Wed, 19 Aug 2026 08:37:13 GMT",
+          "server": "uvicorn",
+          "content-length": "165",
+          "content-type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"INVALID_DATE_RANGE\",\"message\":\"The 'from' date must not be after the 'to' date.\",\"details\":[{\"field\":\"from\",\"issue\":\"must be on or before 'to'\"}]}}"
+      },
+      "link": null,
+      "checks": [
+        {
+          "name": "positive_data_acceptance",
+          "status": "failure",
+          "message": "API rejected schema-compliant request\n\nValid data should have been accepted\nExpected: 2xx, 401, 403, 404, 409, 5xx"
+        }
+      ],
+      "meta": {
+        "generation": {
+          "time": 0.0008008000440895557,
+          "mode": "positive"
+        },
+        "components": {
+          "QUERY": "positive"
+        },
+        "phase": {
+          "name": "fuzzing",
+          "data": {
+            "type": "FuzzingPhaseData",
+            "description": "Positive test case",
+            "location": null,
+            "parameter": null,
+            "parameter_location": null,
+            "mutations": []
+          }
+        },
+        "pool_draws": [],
+        "pool_misses": [],
+        "semantic_draws": [
+          {
+            "path": [
+              "to"
+            ],
+            "type_token": "string",
+            "format_token": "date",
+            "pattern_hash": null,
+            "normalized_name": "to",
+            "value": "0005-07-25",
+            "source_operation": "GET /reports/summary"
+          }
+        ],
+        "dictionary_draws": [],
+        "constants_draws": [],
+        "raw_containers": {}
+      },
+      "path": "/reports/daily-activity",
+      "path_parameters": {},
+      "query": {
+        "to": "0005-07-25"
+      },
+      "case_headers": {
+        "Authorization": "[Filtered]"
+      },
+      "cookies": {},
+      "case_body": {
+        "encoding": "none"
+      },
+      "media_type": null,
+      "parent_index": null
+    }
+  ]
+}

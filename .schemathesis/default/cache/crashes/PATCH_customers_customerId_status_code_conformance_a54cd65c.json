@@ -1,0 +1,87 @@
+{
+  "operation": "PATCH /customers/{customerId}",
+  "method": "PATCH",
+  "path_template": "/customers/{customerId}",
+  "fingerprint": "a54cd65c",
+  "case_id": "7UshK1",
+  "code_sample": "curl -X PATCH -H 'Authorization: [Filtered]' -H 'X-Service-Key: [Filtered]' -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:8000/v1/customers/1",
+  "sequence": [
+    {
+      "method": "PATCH",
+      "url": "http://127.0.0.1:8000/v1/customers/1",
+      "url_template": "http://127.0.0.1:8000/v1/customers/{customerId}",
+      "headers": {
+        "User-Agent": "schemathesis/4.24.3",
+        "Accept-Encoding": "gzip, deflate",
+        "Accept": "*/*",
+        "Connection": "keep-alive",
+        "Authorization": "[Filtered]",
+        "X-Service-Key": "[Filtered]",
+        "X-Schemathesis-TestCaseId": "7UshK1",
+        "Content-Type": "application/json",
+        "Content-Length": "2"
+      },
+      "response": {
+        "status_code": 401,
+        "headers": {
+          "date": "Wed, 19 Aug 2026 08:38:19 GMT",
+          "server": "uvicorn",
+          "content-length": "87",
+          "content-type": "application/json"
+        },
+        "body": "{\"error\":{\"code\":\"SESSION_REVOKED\",\"message\":\"Your session has ended. Sign in again.\"}}"
+      },
+      "link": null,
+      "checks": [
+        {
+          "name": "status_code_conformance",
+          "status": "failure",
+          "message": "Undocumented HTTP status code\n\nReceived: 401\nDocumented: 200, 404, 422"
+        }
+      ],
+      "meta": {
+        "generation": {
+          "time": 0.002809499972499907,
+          "mode": "positive"
+        },
+        "components": {
+          "PATH": "positive",
+          "BODY": "positive"
+        },
+        "phase": {
+          "name": "fuzzing",
+          "data": {
+            "type": "FuzzingPhaseData",
+            "description": "Positive test case",
+            "location": null,
+            "parameter": null,
+            "parameter_location": null,
+            "mutations": []
+          }
+        },
+        "pool_draws": [],
+        "pool_misses": [],
+        "semantic_draws": [],
+        "dictionary_draws": [],
+        "constants_draws": [],
+        "raw_containers": {}
+      },
+      "path": "/customers/{customerId}",
+      "path_parameters": {
+        "customerId": 1
+      },
+      "query": {},
+      "case_headers": {
+        "Authorization": "[Filtered]",
+        "X-Service-Key": "[Filtered]"
+      },
+      "cookies": {},
+      "case_body": {
+        "encoding": "json",
+        "value": {}
+      },
+      "media_type": "application/json",
+      "parent_index": null
+    }
+  ]
+}

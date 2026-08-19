@@ -1,0 +1,95 @@
+{
+  "operation": "GET /customers",
+  "method": "GET",
+  "path_template": "/customers",
+  "fingerprint": "badadeb5",
+  "case_id": "A8CKZh",
+  "code_sample": "curl -X GET -H 'Authorization: [Filtered]' -H 'X-Service-Key: [Filtered]' 'http://127.0.0.1:8000/v1/customers?from=0765-11-28'",
+  "sequence": [
+    {
+      "method": "GET",
+      "url": "http://127.0.0.1:8000/v1/customers?from=0765-11-28",
+      "url_template": "http://127.0.0.1:8000/v1/customers",
+      "headers": {
+        "User-Agent": "schemathesis/4.24.3",
+        "Accept-Encoding": "gzip, deflate",
+        "Accept": "*/*",
+        "Connection": "keep-alive",
+        "Authorization": "[Filtered]",
+        "X-Service-Key": "[Filtered]",
+        "X-Schemathesis-TestCaseId": "A8CKZh"
+      },
+      "response": {
+        "status_code": 200,
+        "headers": {
+          "date": "Wed, 19 Aug 2026 08:42:17 GMT",
+          "server": "uvicorn",
+          "content-length": "2970",
+          "content-type": "application/json"
+        },
+        "body": "{\"data\":[{\"customerId\":1000000006,\"fullName\":\"Joko Widodo\",\"phoneNumber\":\"081377889900\",\"address\":\"Jl. Merdeka No. 1\",\"visitDate\":\"2026-08-19\",\"status\":\"PURCHASE\",\"geo\":{\"latitude\":-3.7928,\"longitude\":102.2608,\"accuracyM\":9.5,\"verified\":true,\"isMocked\":false},\"hasActivation\":true,\"createdAt\":\"2026-08-19T08:26:37.035283Z\"},{\"customerId\":1000000000,\"fullName\":\"Susanto\",\"phoneNumber\":\"082234567890\",\"address\":\"Jl. Kebahagiaan No. 12\",\"visitDate\":\"2026-08-19\",\"status\":\"PURCHASE\",\"geo\":{\"latitude\":-3.7928,\"longitude\":102.2608,\"accuracyM\":12.5,\"verified\":true,\"isMocked\":false},\"hasActivation\":false,\"createdAt\":\"2026-08-19T08:25:39.534213Z\"},{\"customerId\":1000000001,\"fullName\":\"Dewi Anggraini\",\"phoneNumber\":\"081298765432\",\"address\":\"Jl. Melati Raya No. 45\",\"visitDate\":\"2026-08-18\",\"status\":\"HOT_LEADS\",\"geo\":{\"latitude\":-3.7888,\"longitude\":102.26480000000001,\"accuracyM\":12.5,\"verified\":true,\"isMocked\":false},\"hasActivation\":false,\"createdAt\":\"2026-08-19T08:25:39.534213Z\"},{\"customerId\":1000000002,\"fullName\":\"Bambang Wijaya\",\"phoneNumber\":\"085712345678\",\"address\":\"Jl. Cendana Blok C7\",\"visitDate\":\"2026-08-17\",\"status\":\"EDUKASI\",\"geo\":{\"latitude\":-3.7848,\"longitude\":102.2688,\"accuracyM\":12.5,\"verified\":true,\"isMocked\":false},\"hasActivation\":false,\"createdAt\":\"2026-08-19T08:25:39.534213Z\"},{\"customerId\":1000000003,\"fullName\":\"Sri Wahyuni\",\"phoneNumber\":\"087811223344\",\"address\":\"Jl. Anggrek No. 3\",\"visitDate\":\"2026-08-16\",\"status\":\"HOT_LEADS\",\"geo\":{\"latitude\":-3.7808,\"longitude\":102.2728,\"accuracyM\":12.5,\"verified\":true,\"isMocked\":false},\"hasActivation\":false,\"createdAt\":\"2026-08-19T08:25:39.534213Z\"},{\"customerId\":1000000004,\"fullName\":\"Agus Priyanto\",\"phoneNumber\":\"081355667788\",\"address\":\"Perumahan Griya Indah B2\",\"visitDate\":\"2026-08-15\",\"status\":\"PURCHASE\",\"geo\":{\"latitude\":-3.7768,\"longitude\":102.27680000000001,\"accuracyM\":12.5,\"verified\":true,\"isMocked\":false},\"hasActivation\":false,\"createdAt\":\"2026-08-19T08:25:39.534213Z\"},{\"customerId\":1000000005,\"fullName\":\"Nur Halimah\",\"phoneNumber\":\"089912345670\",\"address\":\"Jl. Kenanga No. 21\",\"visitDate\":\"2026-08-14\",\"status\":\"EDUKASI\",\"geo\":{\"latitude\":-3.7728,\"longitude\":102.2808,\"accuracyM\":12.5,\"verified\":true,\"isMocked\":false},\"hasActivation\":false,\"createdAt\":\"2026-08-19T08:25:39.534213Z\"},{\"customerId\":1000000008,\"fullName\":\".\u00d0I\u00f5\uda32\udd4b\\u001db\ud8cb\udf5e_\u00fcx\u00b1\udae4\ude26\",\"phoneNumber\":\"02470921971806\",\"address\":\"\u00d6\u00f0\",\"visitDate\":\"1341-03-11\",\"status\":\"HOT_LEADS\",\"geo\":{\"latitude\":-0.5,\"longitude\":2.469405602230105e-192,\"accuracyM\":null,\"verified\":false,\"isMocked\":false},\"hasActivation\":false,\"createdAt\":\"2026-08-19T08:39:25.271366Z\"},{\"customerId\":1000000009,\"fullName\":\"\u008d\",\"phoneNumber\":\"036880947\",\"address\":\"\u00ef\",\"visitDate\":\"0765-11-28\",\"status\":\"HOT_LEADS\",\"geo\":{\"latitude\":2.225073858507e-311,\"longitude\":-0.00001,\"accuracyM\":null,\"verified\":false,\"isMocked\":false},\"hasActivation\":false,\"createdAt\":\"2026-08-19T08:42:15.494813Z\"}],\"meta\":{\"page\":1,\"perPage\":20,\"total\":9,\"totalPages\":1}}"
+      },
+      "link": null,
+      "checks": [
+        {
+          "name": "response_schema_conformance",
+          "status": "failure",
+          "message": "Response violates schema\n\nnull is not of type \"number\"\n\nValidated against the response schema for status code 200.\n\nSchema at /components/schemas/GeoPoint/properties/accuracyM:\n\n    {\n        \"type\": \"number\",\n        \"format\": \"float\"\n    }\n\nValue:\n\n    null"
+        }
+      ],
+      "meta": {
+        "generation": {
+          "time": 0.000991899985820055,
+          "mode": "positive"
+        },
+        "components": {
+          "QUERY": "positive"
+        },
+        "phase": {
+          "name": "fuzzing",
+          "data": {
+            "type": "FuzzingPhaseData",
+            "description": "Positive test case",
+            "location": null,
+            "parameter": null,
+            "parameter_location": null,
+            "mutations": []
+          }
+        },
+        "pool_draws": [],
+        "pool_misses": [],
+        "semantic_draws": [
+          {
+            "path": [
+              "from"
+            ],
+            "type_token": "string",
+            "format_token": "date",
+            "pattern_hash": null,
+            "normalized_name": "from",
+            "value": "0765-11-28",
+            "source_operation": "POST /customers"
+          }
+        ],
+        "dictionary_draws": [],
+        "constants_draws": [],
+        "raw_containers": {}
+      },
+      "path": "/customers",
+      "path_parameters": {},
+      "query": {
+        "from": "0765-11-28"
+      },
+      "case_headers": {
+        "Authorization": "[Filtered]",
+        "X-Service-Key": "[Filtered]"
+      },
+      "cookies": {},
+      "case_body": {
+        "encoding": "none"
+      },
+      "media_type": null,
+      "parent_index": null
+    }
+  ]
+}
