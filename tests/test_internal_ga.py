@@ -10,7 +10,13 @@ from httpx import AsyncClient
 from sqlalchemy import select
 
 from app.models.activation import Activation
-from app.models.enums import ActivationStatus, IncentiveEventType, InventoryStatus, LedgerStatus
+from app.models.enums import (
+    ActivationStatus,
+    IncentiveEventType,
+    InventoryStatus,
+    LedgerStatus,
+    NetworkGeneration,
+)
 from app.models.incentive import IncentiveLedger, IncentiveRule
 
 
@@ -232,11 +238,15 @@ async def test_confirmed_ga_accrues_against_a_configured_rule(
     assert entries[0].status is LedgerStatus.ACCRUED
 
 
-async def test_no_rules_means_no_accrual(
+async def test_an_uncategorised_device_model_accrues_nothing(
     client: AsyncClient, service_headers, submitted, session
 ) -> None:
-    """With the amounts undecided there are no rules, so nothing accrues. Zero is the
-    honest answer, not a plausible constant."""
+    """Both shipped tiers are keyed on 4G/5G, and the fixture model is uncategorised.
+
+    Accruing nothing is the recoverable failure: fix the ``device_model`` row and
+    re-deliver the GA event. Defaulting an unknown model into the base tier would pay
+    money on a guess.
+    """
     item, _, activation_id = submitted
 
     await client.post(
@@ -270,11 +280,13 @@ async def test_a_replayed_ga_event_does_not_pay_twice(
     assert len(entries) == 1
 
 
-async def test_a_rule_with_conditions_is_skipped(
+async def test_a_rule_with_an_unsupported_condition_is_skipped(
     client: AsyncClient, service_headers, submitted, session, today
 ) -> None:
-    """The condition language was never specified. Paying out on terms nobody agreed
-    would be worse than paying nothing."""
+    """Volume tiering is still undecided, so `minPerMonth` has no defined semantics.
+
+    Paying out on terms nobody agreed to would be worse than paying nothing.
+    """
     session.add(
         IncentiveRule(
             rule_name="Conditional bonus",
@@ -353,4 +365,100 @@ async def test_a_later_failure_voids_the_accrual(
         )
     ).all()
     # Marked VOID rather than deleted, so a payout dispute is still reconstructable.
+    assert [entry.status for entry in entries] == [LedgerStatus.VOID]
+
+
+# ---------------------------------------------------------------------------
+# The 4G / 5G activation tiers agreed with the business on 2026-08-22.
+# These read the rules migration 0002 actually installs rather than inventing their
+# own: a test that created its own Rp 35.000 row would stay green even if the
+# migration shipped the wrong number.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def tier_rules(session) -> dict[str, IncentiveRule]:
+    rules = (
+        await session.scalars(
+            select(IncentiveRule).where(
+                IncentiveRule.event_type == IncentiveEventType.ACTIVATION,
+                IncentiveRule.conditions.has_key("networkGeneration"),
+            )
+        )
+    ).all()
+    by_generation = {rule.conditions["networkGeneration"]: rule for rule in rules}
+    assert set(by_generation) == {"4G", "5G"}, "migration 0002 must supply both tiers"
+    return by_generation
+
+
+@pytest.mark.parametrize(
+    ("generation", "expected_idr"),
+    [
+        (NetworkGeneration.FOUR_G, Decimal("35000.00")),
+        (NetworkGeneration.FIVE_G, Decimal("135000.00")),
+    ],
+)
+async def test_a_confirmed_ga_accrues_the_tier_of_its_modem(
+    client: AsyncClient,
+    service_headers,
+    submitted,
+    device_model,
+    session,
+    tier_rules,
+    generation: NetworkGeneration,
+    expected_idr: Decimal,
+) -> None:
+    device_model.network_generation = generation
+    await session.flush()
+    item, _, activation_id = submitted
+
+    await client.post(
+        "/internal/ga-events",
+        json={"events": [{"msisdn": item.msisdn, "activationDate": datetime.now(UTC).isoformat()}]},
+        headers=service_headers,
+    )
+
+    entries = (
+        await session.scalars(
+            select(IncentiveLedger).where(IncentiveLedger.activation_id == activation_id)
+        )
+    ).all()
+    # Exactly one: the other tier's rule must not also match.
+    assert len(entries) == 1
+    assert entries[0].amount_idr == expected_idr
+    assert entries[0].rule_id == tier_rules[generation.value].rule_id
+
+
+async def test_a_failed_ga_voids_a_tier_accrual(
+    client: AsyncClient, service_headers, submitted, device_model, session, tier_rules
+) -> None:
+    """A unit that goes live and is then reported failed must not stay on the payroll."""
+    device_model.network_generation = NetworkGeneration.FIVE_G
+    await session.flush()
+    item, _, activation_id = submitted
+
+    await client.post(
+        "/internal/ga-events",
+        json={"events": [{"msisdn": item.msisdn, "activationDate": datetime.now(UTC).isoformat()}]},
+        headers=service_headers,
+    )
+    await client.post(
+        "/internal/ga-events",
+        json={
+            "events": [
+                {
+                    "msisdn": item.msisdn,
+                    "activationDate": datetime.now(UTC).isoformat(),
+                    "outcome": "FAILED",
+                }
+            ]
+        },
+        headers=service_headers,
+    )
+
+    entries = (
+        await session.scalars(
+            select(IncentiveLedger).where(IncentiveLedger.activation_id == activation_id)
+        )
+    ).all()
     assert [entry.status for entry in entries] == [LedgerStatus.VOID]

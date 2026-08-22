@@ -1083,6 +1083,14 @@ components:
       type: string
       enum: [AVAILABLE, ALLOCATED, CONSUMED, ACTIVATED, RETURNED, BLOCKED]
 
+    NetworkGeneration:
+      type: string
+      description: >
+        Radio generation of the CPE, held on the device-model catalogue. It is what
+        selects the incentive tier accrued on a confirmed Gross Add. Omitted when the
+        model has not been categorised yet.
+      enum: ["4G", "5G"]
+
     InventoryItem:
       type: object
       properties:
@@ -1094,6 +1102,7 @@ components:
           properties:
             modelCode: { type: string, examples: ["HKM 127+"] }
             brand:     { type: string, examples: ["HKM"] }
+            networkGeneration: { $ref: "#/components/schemas/NetworkGeneration" }
         status: { $ref: "#/components/schemas/InventoryStatus" }
         eligible:
           type: boolean

@@ -2,7 +2,8 @@
 
 The database stores these as ``VARCHAR`` + ``CHECK`` rather than native PostgreSQL
 enum types, so a value can be added in a plain transaction. Every member's name equals
-its value, which is what lets SQLAlchemy persist them without a type decorator.
+its value, which is what lets SQLAlchemy persist them without a type decorator — the
+sole exception is :class:`NetworkGeneration`, whose values start with a digit.
 """
 
 from __future__ import annotations
@@ -23,6 +24,18 @@ class InventoryStatus(StrEnum):
     ACTIVATED = "ACTIVATED"
     RETURNED = "RETURNED"
     BLOCKED = "BLOCKED"
+
+
+class NetworkGeneration(StrEnum):
+    """Radio generation of a CPE model. Selects the incentive tier on a confirmed GA.
+
+    The one enum here whose member names differ from their values, because a Python
+    identifier cannot start with a digit. The column therefore declares
+    ``values_callable`` so PostgreSQL stores "4G" / "5G" and not "FOUR_G" / "FIVE_G".
+    """
+
+    FOUR_G = "4G"
+    FIVE_G = "5G"
 
 
 class CustomerStatus(StrEnum):

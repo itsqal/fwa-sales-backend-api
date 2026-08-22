@@ -81,11 +81,19 @@ CREATE TABLE device_model (
     model_code      VARCHAR(60)  NOT NULL,   -- 'HKM 127+', 'RABIT CPE-XR', 'ADVAN V1 PRO'
     brand           VARCHAR(60),             -- 'HKM', 'RABIT', 'ADVAN'
     sku             VARCHAR(60),
+    network_generation VARCHAR(10),          -- '4G' | '5G'; NULL = not categorised yet
     created_at      TIMESTAMPTZ  NOT NULL DEFAULT now(),
-    CONSTRAINT uq_device_model_code UNIQUE (model_code)
+    CONSTRAINT uq_device_model_code UNIQUE (model_code),
+    CONSTRAINT ck_device_model_netgen CHECK
+        (network_generation IS NULL OR network_generation IN ('4G','5G'))
 );
 COMMENT ON TABLE device_model IS
   'CPE / modem catalogue. Surfaces read-only as "Tipe Modem" on the activation form.';
+COMMENT ON COLUMN device_model.network_generation IS
+  'Radio generation of the CPE. Selects the incentive tier on a confirmed Gross Add: '
+  'a 4G unit accrues Rp 35.000, a 5G unit Rp 135.000. Deliberately nullable — an '
+  'uncategorised model accrues nothing and logs a warning, because underpaying is '
+  'recoverable and overpaying is a payroll incident.';
 
 CREATE TABLE fwa_inventory (
     msisdn            VARCHAR(15) PRIMARY KEY,
@@ -282,6 +290,19 @@ CREATE TABLE incentive_rule (
     CONSTRAINT ck_rule_event CHECK (event_type IN ('ACTIVATION','NEW_CUSTOMER','HOT_LEAD')),
     CONSTRAINT ck_rule_dates CHECK (effective_to IS NULL OR effective_to >= effective_from)
 );
+COMMENT ON COLUMN incentive_rule.conditions IS
+  'Predicate the accrual engine must satisfy before writing a ledger entry. Exactly one '
+  'key is implemented: "networkGeneration" ("4G" | "5G"), matched against the device '
+  'model behind the activated MSISDN. An empty object always matches. A rule carrying '
+  'any other key is skipped and logged — an unevaluable rule must never pay out.';
+
+-- The AE activation tiers agreed with the business on 2026-08-22. Held as data, not
+-- code: a future revision is a new pair of rows with a later effective_from, and the
+-- ledger keeps pointing at the rule that actually paid.
+INSERT INTO incentive_rule (rule_name, event_type, amount_idr, conditions, effective_from)
+VALUES
+  ('AE GA activation - 4G modem', 'ACTIVATION',  35000.00, '{"networkGeneration": "4G"}', DATE '2026-08-22'),
+  ('AE GA activation - 5G modem', 'ACTIVATION', 135000.00, '{"networkGeneration": "5G"}', DATE '2026-08-22');
 
 CREATE TABLE incentive_ledger (
     ledger_id     BIGINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,

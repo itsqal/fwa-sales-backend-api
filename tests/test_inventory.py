@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from httpx import AsyncClient
 
-from app.models.enums import InventoryStatus
+from app.models.enums import InventoryStatus, NetworkGeneration
 
 
 async def test_lookup_resolves_the_bundled_device(
@@ -22,6 +22,20 @@ async def test_lookup_resolves_the_bundled_device(
     assert body["iccid"] == item.iccid
     assert body["deviceModel"]["modelCode"] == device_model.model_code
     assert body["eligible"] is True
+
+
+async def test_lookup_exposes_the_device_network_generation(
+    client: AsyncClient, auth_headers, ae, make_inventory, device_model, session
+) -> None:
+    """It drives the incentive tier, so the app shows the AE what a scan is worth."""
+    device_model.network_generation = NetworkGeneration.FIVE_G
+    await session.flush()
+    item = await make_inventory(ae=ae)
+
+    response = await client.get(f"/inventory/msisdn/{item.msisdn}", headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.json()["deviceModel"]["networkGeneration"] == "5G"
 
 
 async def test_reason_is_absent_rather_than_null_when_eligible(
