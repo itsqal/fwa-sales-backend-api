@@ -43,7 +43,11 @@ def to_inventory_out(item: FwaInventory, *, reason: IneligibilityReason | None) 
         iccid=item.iccid,
         imei=item.imei,
         device_model=(
-            DeviceModelOut(model_code=item.device_model.model_code, brand=item.device_model.brand)
+            DeviceModelOut(
+                model_code=item.device_model.model_code,
+                brand=item.device_model.brand,
+                network_generation=item.device_model.network_generation,
+            )
             if item.device_model is not None
             else None
         ),

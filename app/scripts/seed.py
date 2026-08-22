@@ -3,10 +3,15 @@
 Run with ``uv run python -m app.scripts.seed``. Idempotent: re-running updates rather
 than duplicating, so it is safe to use as a "reset my dev data" button.
 
-Deliberately **no incentive_rule rows.** The amounts and conditions are an open business
-decision (CLAUDE.md §11.1), and a seeded "plausible" figure is exactly how an invented
-number becomes the number everybody assumes was agreed. The "Insentif" tile therefore
-reads zero on seeded data — see the note printed at the end.
+Deliberately **no incentive_rule rows.** The two agreed AE activation tiers are inserted
+by migration 0002, so they are already present after ``alembic upgrade head`` and
+seeding them again would double every payout. Nothing else about incentive is decided,
+and a seeded "plausible" figure is exactly how an invented number becomes the number
+everybody assumes was agreed.
+
+The ``network_generation`` values below are **dev placeholders**, chosen only so that
+seeded data exercises both tiers. They are not a statement about what these real CPE
+models support; the live catalogue must be categorised by the business.
 """
 
 from __future__ import annotations
@@ -22,7 +27,7 @@ from app.core.config import get_settings
 from app.core.security import hash_password
 from app.db.session import dispose_engine, get_sessionmaker
 from app.models.customer import Customer, CustomerStatusHistory
-from app.models.enums import AeStatus, CustomerStatus, InventoryStatus
+from app.models.enums import AeStatus, CustomerStatus, InventoryStatus, NetworkGeneration
 from app.models.identity import AccountExecutive, Region
 from app.models.incentive import AeDailyTarget
 from app.models.inventory import DeviceModel, FwaInventory
@@ -40,9 +45,9 @@ AES = [
 ]
 
 DEVICE_MODELS = [
-    ("HKM 127+", "HKM", "SKU-HKM-127P"),
-    ("RABIT CPE-XR", "RABIT", "SKU-RBT-XR"),
-    ("ADVAN V1 PRO", "ADVAN", "SKU-ADV-V1P"),
+    ("HKM 127+", "HKM", "SKU-HKM-127P", NetworkGeneration.FOUR_G),
+    ("RABIT CPE-XR", "RABIT", "SKU-RBT-XR", NetworkGeneration.FIVE_G),
+    ("ADVAN V1 PRO", "ADVAN", "SKU-ADV-V1P", NetworkGeneration.FOUR_G),
 ]
 
 CUSTOMER_NAMES = [
@@ -66,14 +71,20 @@ async def seed(session: AsyncSession) -> None:
         regions[code] = region
 
     models = {}
-    for model_code, brand, sku in DEVICE_MODELS:
+    for model_code, brand, sku, generation in DEVICE_MODELS:
         model = await session.scalar(
             select(DeviceModel).where(DeviceModel.model_code == model_code)
         )
         if model is None:
-            model = DeviceModel(model_code=model_code, brand=brand, sku=sku)
+            model = DeviceModel(
+                model_code=model_code, brand=brand, sku=sku, network_generation=generation
+            )
             session.add(model)
             await session.flush()
+        else:
+            # Re-running after 0002 must categorise catalogue rows seeded before it,
+            # or the seeded AE accrues nothing and the Insentif tile stays at zero.
+            model.network_generation = generation
         models[model_code] = model
 
     aes = {}
@@ -211,8 +222,8 @@ async def main() -> None:
 
     print("Seeded development fixtures.")
     print(f"  Log in as AE-BENGKULU1 or AE-SIDOARJO2 with password: {DEV_PASSWORD}")
-    print("  No incentive_rule rows were created — the amounts are an open business")
-    print("  decision, so the Insentif tile will read 0 until real rules are supplied.")
+    print("  Incentive rules come from migration 0002 (4G Rp 35.000 / 5G Rp 135.000);")
+    print("  the seeded device models carry placeholder 4G/5G values so both tiers fire.")
 
 
 if __name__ == "__main__":

@@ -19,14 +19,20 @@ from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, created_at_column, updated_at_column
-from app.models.enums import InventoryStatus
+from app.models.enums import InventoryStatus, NetworkGeneration
 
 
 class DeviceModel(Base):
     """CPE catalogue. Surfaces read-only as "Tipe Modem" on the activation form."""
 
     __tablename__ = "device_model"
-    __table_args__ = (UniqueConstraint("model_code", name="uq_device_model_code"),)
+    __table_args__ = (
+        UniqueConstraint("model_code", name="uq_device_model_code"),
+        CheckConstraint(
+            "network_generation IS NULL OR network_generation IN ('4G','5G')",
+            name="ck_device_model_netgen",
+        ),
+    )
 
     device_model_id: Mapped[uuid.UUID] = mapped_column(
         PgUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
@@ -34,6 +40,20 @@ class DeviceModel(Base):
     model_code: Mapped[str] = mapped_column(String(60), nullable=False)
     brand: Mapped[str | None] = mapped_column(String(60))
     sku: Mapped[str | None] = mapped_column(String(60))
+    # Selects the incentive tier on a confirmed Gross Add. Nullable on purpose: a model
+    # nobody has categorised yet accrues nothing and logs a warning, rather than being
+    # defaulted into a tier and quietly paying the wrong amount.
+    network_generation: Mapped[NetworkGeneration | None] = mapped_column(
+        Enum(
+            NetworkGeneration,
+            native_enum=False,
+            create_constraint=False,
+            length=10,
+            # Without this SQLAlchemy would store the member *names*, and the CHECK
+            # constraint would reject every row.
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        )
+    )
     created_at: Mapped[created_at_column]
 
 

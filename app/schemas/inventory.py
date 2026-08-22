@@ -4,13 +4,17 @@ from __future__ import annotations
 
 from pydantic import Field
 
-from app.models.enums import IneligibilityReason, InventoryStatus
+from app.models.enums import IneligibilityReason, InventoryStatus, NetworkGeneration
 from app.schemas.common import CamelModel
 
 
 class DeviceModelOut(CamelModel):
     model_code: str = Field(examples=["HKM 127+"])
     brand: str | None = Field(default=None, examples=["HKM"])
+    network_generation: NetworkGeneration | None = Field(
+        default=None,
+        description="Radio generation of the CPE. Absent when the model is uncategorised.",
+    )
 
 
 class InventoryItemOut(CamelModel):

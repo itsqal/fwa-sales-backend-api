@@ -11,6 +11,7 @@ from app.models.enums import (
     IncentiveEventType,
     InventoryStatus,
     LedgerStatus,
+    NetworkGeneration,
 )
 from app.models.identity import AccountExecutive, AuthRefreshToken, Region
 from app.models.incentive import AeDailyTarget, IncentiveLedger, IncentiveRule
@@ -35,5 +36,6 @@ __all__ = [
     "IncentiveRule",
     "InventoryStatus",
     "LedgerStatus",
+    "NetworkGeneration",
     "Region",
 ]
