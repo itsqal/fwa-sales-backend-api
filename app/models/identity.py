@@ -22,7 +22,7 @@ from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, created_at_column, updated_at_column
-from app.models.enums import AeStatus
+from app.models.enums import AeStatus, BrandScope
 
 
 class Region(Base):
@@ -49,6 +49,10 @@ class AccountExecutive(Base):
             "status IN ('ACTIVE','SUSPENDED','INACTIVE')",
             name="ck_ae_status",
         ),
+        CheckConstraint(
+            "brand_scope IS NULL OR brand_scope IN ('IM3','3ID','HYBRID')",
+            name="ck_ae_brand_scope",
+        ),
         # Login is case-insensitive, enforced by a functional unique index that
         # autogenerate cannot see. See the initial migration.
         Index("uq_ae_code_ci", func.upper(text("ae_code")), unique=True),
@@ -66,6 +70,20 @@ class AccountExecutive(Base):
         PgUUID(as_uuid=True), ForeignKey("region.region_id")
     )
     mpx_code: Mapped[str | None] = mapped_column(String(50))
+    # Which telco brands this AE may sell. Read only by the dashboard — the mobile
+    # contract is unchanged by its presence. NULL means not recorded.
+    brand_scope: Mapped[BrandScope | None] = mapped_column(
+        Enum(
+            BrandScope,
+            native_enum=False,
+            create_constraint=False,
+            length=10,
+            # "3ID" starts with a digit, so the member name differs from its value and
+            # SQLAlchemy would otherwise persist the name. Same treatment as
+            # NetworkGeneration.
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        )
+    )
     work_shift_start: Mapped[time] = mapped_column(
         Time, nullable=False, server_default=text("'08:00'")
     )

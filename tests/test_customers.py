@@ -3,17 +3,22 @@
 from __future__ import annotations
 
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
 
+from app.core.config import get_settings
 from app.models.enums import CustomerStatus
 
 
 def payload(**overrides) -> dict:
+    # visitDate must default to *today*, not a fixed date. GET /customers defaults to
+    # Period.LAST_7_DAYS, so a hardcoded date silently drops out of the default window
+    # once it is more than a week old and every list assertion here starts failing on a
+    # date that has nothing to do with the code under test.
     body = {
-        "visitDate": "2026-08-19",
+        "visitDate": datetime.now(get_settings().tz).date().isoformat(),
         "fullName": "Susanto",
         "phoneNumber": "082234567890",
         "address": "Jl. Kebahagiaan No. 12",

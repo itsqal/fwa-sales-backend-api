@@ -42,16 +42,65 @@ def test_no_endpoint_exists_that_the_contract_does_not_declare() -> None:
     assert not extra, f"implemented but absent from the contract: {sorted(extra)}"
 
 
-def test_no_endpoint_accepts_an_ae_id() -> None:
-    """A client must never be able to write on another AE's behalf."""
-    offenders: list[str] = []
-    for path, operations in app.openapi()["paths"].items():
-        for method, operation in operations.items():
-            for parameter in operation.get("parameters", []):
-                if parameter["name"].lower() in {"aeid", "ae_id"}:
-                    offenders.append(f"{method.upper()} {path} ?{parameter['name']}")
+def _operations_naming_an_ae(spec: dict, *, resolve: bool = False) -> list[tuple[str, str, dict]]:
+    """Every operation that takes an `aeId`, whatever kind of parameter it is.
 
-    assert not offenders, f"aeId must come from the JWT only: {offenders}"
+    `resolve` follows `$ref` parameters, which the hand-written contract uses and the
+    generated one does not.
+    """
+    found = []
+    for path, operations in spec["paths"].items():
+        for method, operation in operations.items():
+            if not isinstance(operation, dict):
+                continue
+            for parameter in operation.get("parameters", []):
+                if resolve and "$ref" in parameter:
+                    name = parameter["$ref"].rsplit("/", 1)[-1]
+                    parameter = spec["components"]["parameters"].get(name, {})
+                if parameter.get("name", "").lower() in {"aeid", "ae_id"}:
+                    found.append((method.upper(), path, operation))
+    return found
+
+
+def test_no_ae_audience_endpoint_accepts_an_ae_id() -> None:
+    """Golden rule 2, unchanged: a mobile client must never write on another AE's behalf.
+
+    Narrowed from "no endpoint" to "no AE-audience endpoint" when the supply chain
+    module landed, and the distinction is the whole point of the second token audience
+    rather than a loosening of the rule. The dashboard exists to let an MPX act on
+    named salesmen — `GET /admin/account-executives/{aeId}` and `POST /admin/allocations`
+    cannot work otherwise — so admin routes are scoped by the organisation binding on
+    the token instead. On the AE audience nothing changed: identity still comes from the
+    JWT and from nowhere else.
+    """
+    # Checked against the generated spec, so this catches an implementation that grows
+    # a parameter the contract never declared.
+    offenders = [
+        f"{method} {path}"
+        for method, path, _ in _operations_naming_an_ae(app.openapi())
+        if "/admin/" not in path
+    ]
+
+    assert not offenders, f"aeId must come from the JWT on AE routes: {offenders}"
+
+
+def test_every_endpoint_naming_an_ae_is_admin_audience() -> None:
+    """The other half of the rule above, and the one that keeps it honest.
+
+    Scoping the previous test to `/admin` would be worth nothing if an operation could
+    name an `aeId` while being reachable with an AE token. Every such operation must
+    demand `adminBearerAuth`, so the path prefix is never the thing doing the work.
+    """
+    # Checked against the contract, not the generated spec: FastAPI mints one
+    # HTTPBearer scheme for both audiences and cannot tell them apart, while
+    # docs/openapi.yaml — the document of record — names adminBearerAuth explicitly.
+    offenders = []
+    for method, path, operation in _operations_naming_an_ae(CONTRACT, resolve=True):
+        schemes = {name for entry in operation.get("security", []) for name in entry}
+        if "adminBearerAuth" not in schemes:
+            offenders.append(f"{method} {path} (security={sorted(schemes) or 'inherited'})")
+
+    assert not offenders, f"an aeId is only safe behind the admin audience: {offenders}"
 
 
 @pytest.mark.parametrize(

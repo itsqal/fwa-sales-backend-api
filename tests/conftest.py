@@ -43,7 +43,7 @@ os.environ["LOGIN_RATE_LIMIT_WINDOW_SECONDS"] = "60"
 
 import asyncpg  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
-from sqlalchemy import NullPool  # noqa: E402
+from sqlalchemy import NullPool, select  # noqa: E402
 from sqlalchemy.ext.asyncio import (  # noqa: E402
     AsyncEngine,
     AsyncSession,
@@ -52,14 +52,23 @@ from sqlalchemy.ext.asyncio import (  # noqa: E402
 )
 
 from app.api.v1 import auth as auth_router  # noqa: E402
+from app.api.v1.admin import auth as admin_auth_router  # noqa: E402
 from app.core.config import get_settings  # noqa: E402
 from app.core.deps import get_db  # noqa: E402
 from app.core.security import hash_password  # noqa: E402
 from app.main import app as fastapi_app  # noqa: E402
+from app.models.admin import AdminUser  # noqa: E402
 from app.models.customer import Customer  # noqa: E402
-from app.models.enums import AeStatus, CustomerStatus, InventoryStatus  # noqa: E402
+from app.models.enums import (  # noqa: E402
+    AdminRole,
+    AdminStatus,
+    AeStatus,
+    CustomerStatus,
+    InventoryStatus,
+)
 from app.models.identity import AccountExecutive, Region  # noqa: E402
 from app.models.inventory import DeviceModel, FwaInventory  # noqa: E402
+from app.models.organisation import DevicePartner, Mpx  # noqa: E402
 
 TEST_PASSWORD = "TestPassword123!"
 
@@ -141,6 +150,7 @@ async def client(session: AsyncSession) -> AsyncIterator[AsyncClient]:
     # The login limiter is process-global; without this, tests leak attempts into
     # each other and the failure looks like a flaky 429.
     auth_router._login_limiter = None
+    admin_auth_router._login_limiter = None
 
     transport = ASGITransport(app=fastapi_app)
     async with AsyncClient(transport=transport, base_url="http://test/v1") as http_client:
@@ -148,6 +158,7 @@ async def client(session: AsyncSession) -> AsyncIterator[AsyncClient]:
 
     fastapi_app.dependency_overrides.clear()
     auth_router._login_limiter = None
+    admin_auth_router._login_limiter = None
 
 
 # ---------------------------------------------------------------------------
@@ -234,19 +245,31 @@ _unit_counter = iter(range(10_000, 99_999))
 
 @pytest.fixture
 async def make_inventory(session: AsyncSession, device_model: DeviceModel):
+    _UNSET = object()
+
     async def factory(
         *,
         ae: AccountExecutive | None = None,
         status: InventoryStatus = InventoryStatus.ALLOCATED,
+        imei: str | object | None = _UNSET,
+        received_at: datetime | None = None,
     ) -> FwaInventory:
+        """Build one unit.
+
+        Pass ``imei=None`` for a number IOH has supplied but nobody has paired — the
+        state that only exists since migration 0005, and the one the AE app must never
+        see. ``imei_required_once_paired`` will reject it in any status other than
+        MSISDN_ISSUED, which is the point.
+        """
         suffix = next(_unit_counter)
         item = FwaInventory(
             msisdn=f"628588272{suffix:05d}",
             iccid=f"896201000020391{suffix:05d}",
-            imei=f"3558066713{suffix:05d}",
+            imei=(f"3558066713{suffix:05d}" if imei is _UNSET else imei),
             device_model_id=device_model.device_model_id,
             allocated_ae_id=ae.ae_id if ae is not None else None,
             allocated_at=datetime.now(),
+            received_at=received_at,
             status=status,
         )
         session.add(item)
@@ -298,3 +321,90 @@ def today() -> date:
 @pytest.fixture
 def yesterday(today: date) -> date:
     return today - timedelta(days=1)
+
+
+# ---------------------------------------------------------------------------
+# Supply chain fixtures — admin principals and their organisations
+#
+# device_partner and mpx rows are seeded by migration 0003, so these fixtures read
+# the real reference data rather than inventing parallel rows.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def device_partner(session: AsyncSession) -> DevicePartner:
+    row = await session.scalar(select(DevicePartner).where(DevicePartner.code == "ADVAN"))
+    assert row is not None, "migration 0003 should have seeded the Device Partners"
+    return row
+
+
+@pytest.fixture
+async def mpx(session: AsyncSession) -> Mpx:
+    row = await session.scalar(select(Mpx).where(Mpx.code == "MPX-BKL-01"))
+    assert row is not None, "migration 0003 should have seeded the MPXs"
+    return row
+
+
+@pytest.fixture
+async def make_admin(session: AsyncSession):
+    async def factory(
+        *,
+        role: AdminRole = AdminRole.DP_ADMIN,
+        device_partner: DevicePartner | None = None,
+        mpx: Mpx | None = None,
+        username: str | None = None,
+        password: str = TEST_PASSWORD,
+        status: AdminStatus = AdminStatus.ACTIVE,
+        must_change_pw: bool = False,
+    ) -> AdminUser:
+        admin = AdminUser(
+            username=username or f"admin.{uuid.uuid4().hex[:8]}",
+            full_name="Atha Marcella",
+            password_hash=hash_password(password),
+            role=role,
+            device_partner_id=(
+                device_partner.device_partner_id if device_partner is not None else None
+            ),
+            mpx_id=mpx.mpx_id if mpx is not None else None,
+            status=status,
+            must_change_pw=must_change_pw,
+        )
+        session.add(admin)
+        await session.flush()
+        return admin
+
+    return factory
+
+
+@pytest.fixture
+async def dp_admin(make_admin, device_partner: DevicePartner) -> AdminUser:
+    return await make_admin(role=AdminRole.DP_ADMIN, device_partner=device_partner)
+
+
+@pytest.fixture
+async def mpx_admin(make_admin, mpx: Mpx) -> AdminUser:
+    return await make_admin(role=AdminRole.MPX_ADMIN, mpx=mpx)
+
+
+@pytest.fixture
+async def ioh_admin(make_admin) -> AdminUser:
+    return await make_admin(role=AdminRole.IOH_ADMIN)
+
+
+@pytest.fixture
+async def admin_login(client: AsyncClient):
+    """Log an admin in and return the Authorization header for them."""
+
+    async def factory(admin: AdminUser, password: str = TEST_PASSWORD) -> dict[str, str]:
+        response = await client.post(
+            "/admin/auth/login", json={"username": admin.username, "password": password}
+        )
+        assert response.status_code == 200, response.text
+        return {"Authorization": f"Bearer {response.json()['accessToken']}"}
+
+    return factory
+
+
+@pytest.fixture
+async def admin_auth_headers(admin_login, dp_admin: AdminUser) -> dict[str, str]:
+    return await admin_login(dp_admin)
