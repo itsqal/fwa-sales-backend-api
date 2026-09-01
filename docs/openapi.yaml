@@ -64,6 +64,45 @@ tags:
     description: Short-lived signed delivery of private uploads.
   - name: Internal
     description: Server-to-server. Not reachable by the mobile app.
+  - name: Addresses
+    description: The MPX *Alamat Penerima* book. Required to raise a device order.
+  - name: Shipment
+    description: |
+      The Device Partner dispatches with a courier and AWB; both sides watch the
+      four-step Delivery Progress tracker.
+  - name: Goods Receipt
+    description: |
+      The MPX confirms a delivery. One final, all-or-nothing confirmation — a short
+      box is resolved outside this system.
+  - name: Stock & Allocation
+    description: |
+      What an MPX holds, and handing it to a salesman. The allocation endpoint is
+      the seam between this dashboard and the AE mobile app.
+  - name: Account Executives
+    description: |
+      The AE directory, as an MPX sees it. This is the endpoint that could not
+      exist on the AE audience: golden rule 2 scopes every AE-facing list to the
+      token, so no AE route returns more than one AE.
+  - name: MSISDN PO
+    description: |
+      A Device Partner requests numbers from IOH and IOH supplies them. One
+      feature seen from two sides, sharing a status machine.
+  - name: Hard Bundle
+    description: The Device Partner pairs an IMEI to each supplied MSISDN.
+  - name: Device PO
+    description: |
+      An MPX orders devices from a Device Partner; the partner accepts and
+      attaches paired bundles to the order.
+  - name: Admin Reference
+    description: |
+      Read-only master data the dashboard forms are built from. Small fixed sets,
+      returned unpaginated in a `{ "data": [...] }` envelope.
+  - name: Admin Auth
+    description: |
+      Web dashboard login for the supply chain module (Device Partner / IOH / MPX).
+      A **separate token audience** from the AE app: tokens minted here carry
+      `aud: "admin"` and are rejected by every AE route, and an AE token is
+      rejected by every `/admin` route. See `adminBearerAuth`.
 
 security:
   - bearerAuth: []
@@ -93,15 +132,20 @@ paths:
               properties:
                 aeCode:
                   type: string
+                  minLength: 1
+                  maxLength: 50
                   examples: ["AE-BENGKULU1"]
                 password:
                   type: string
                   format: password
+                  minLength: 1
                 deviceLabel:
                   type: string
+                  maxLength: 120
                   description: Free-text device identifier, stored against the refresh token.
                   examples: ["Samsung A15 / android-14"]
       responses:
+        "400": { $ref: "#/components/responses/MalformedBody" }
         "200":
           description: Authenticated
           content:
@@ -128,8 +172,9 @@ paths:
               type: object
               required: [refreshToken]
               properties:
-                refreshToken: { type: string }
+                refreshToken: { type: string, minLength: 1 }
       responses:
+        "400": { $ref: "#/components/responses/MalformedBody" }
         "200":
           description: Refreshed
           content:
@@ -162,6 +207,1369 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/AccountExecutive" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+
+  # ===================================================================
+  # ADMIN AUTH  —  supply chain web dashboard
+  #
+  # Deliberately a separate principal, table, and token audience from the AE.
+  # The mobile app is already in the field; unifying the two would mean
+  # touching its live authentication path. See
+  # "Supply Chain Backend Extension Spec.md" section 2.
+  # ===================================================================
+  /admin/auth/login:
+    post:
+      tags: [Admin Auth]
+      summary: Log in to the web dashboard
+      description: |
+        Admin credentials are seeded out-of-band by IOH HQ — there is no
+        self-service registration and no user-management screen in v1.
+
+        The username is matched **case-insensitively**, exactly as an AE code is,
+        backed by the functional unique index `uq_admin_username_ci`.
+
+        The returned access token carries `aud: "admin"`. Presenting it to an
+        AE-audience route fails with `401 INVALID_TOKEN`.
+      security: []
+      operationId: adminLogin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username:
+                  type: string
+                  minLength: 1
+                  maxLength: 50
+                  examples: ["dp.advan"]
+                password:
+                  type: string
+                  format: password
+                  minLength: 1
+                deviceLabel:
+                  type: string
+                  maxLength: 120
+                  description: Free-text browser/device identifier, stored against the refresh token.
+                  examples: ["Chrome 141 / Windows"]
+      responses:
+        "400": { $ref: "#/components/responses/MalformedBody" }
+        "200":
+          description: Authenticated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminAuthTokens" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /admin/auth/refresh:
+    post:
+      tags: [Admin Auth]
+      summary: Exchange an admin refresh token for a new access token
+      description: |
+        Rotates the refresh token. The presented token is revoked whether or not
+        it turns out to be a replay, matching the AE implementation.
+      security: []
+      operationId: adminRefreshToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken: { type: string, minLength: 1 }
+      responses:
+        "400": { $ref: "#/components/responses/MalformedBody" }
+        "200":
+          description: Refreshed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminAuthTokens" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /admin/auth/logout:
+    post:
+      tags: [Admin Auth]
+      summary: Revoke the current admin refresh token
+      description: Revokes the calling browser session only, not every session this admin holds.
+      security:
+        - adminBearerAuth: []
+      operationId: adminLogout
+      responses:
+        "204": { description: Logged out }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /admin/me:
+    get:
+      tags: [Admin Auth]
+      summary: Profile and organisation binding of the signed-in admin
+      description: |
+        The dashboard builds its sidebar from this response: `role` selects the
+        menu set, and `organisation` supplies the label shown in the topbar.
+
+        `organisation` is `null` only for `IOH_ADMIN`, which is global-read by
+        design and bound to no single counterparty.
+      security:
+        - adminBearerAuth: []
+      operationId: getAdminMe
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminProfile" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  # ===================================================================
+  # ADMIN REFERENCE DATA
+  # ===================================================================
+  /admin/reference/call-plans:
+    get:
+      tags: [Admin Reference]
+      summary: Call plans available on an MSISDN request
+      description: |
+        Backs the *Call Plan* dropdown. Note `kind`: `SALDO_MOBO` is a balance
+        top-up, not a data bundle, and carries no `quotaGb`. Consumers should
+        branch on `kind` rather than on the absence of `quotaGb`.
+      security: [{ adminBearerAuth: [] }]
+      operationId: listCallPlans
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/CallPlan" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /admin/reference/brands:
+    get:
+      tags: [Admin Reference]
+      summary: Telco retail brands
+      description: |
+        Two rows. `displayName` is the brand (*IM3*), `outletName` the storefront
+        (*Gerai IM3*) — the mockups used both for the same brand, so pick per
+        context deliberately rather than by whichever screen was copied.
+      security: [{ adminBearerAuth: [] }]
+      operationId: listBrands
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Brand" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /admin/reference/device-models:
+    get:
+      tags: [Admin Reference]
+      summary: Device catalogue
+      description: |
+        Backs the device picker on the MPX *Buat PO* form.
+
+        `listPriceIdr` may be **null**, meaning the model has no confirmed price
+        and cannot yet be ordered. That is deliberate — no price list has been
+        supplied, and a guessed price on a purchase order is worse than a blocked
+        form. A device PO snapshots its own `unitPriceIdr` at creation, so a later
+        change here never rewrites the value of a closed order.
+
+        `brand` here is the hardware **manufacturer** (`HKM`, `ADVAN`). The telco
+        brand is a separate concept — see `/admin/reference/brands`.
+      security: [{ adminBearerAuth: [] }]
+      operationId: listDeviceModels
+      parameters:
+        - name: includeInactive
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/DeviceModelRef" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /admin/reference/device-partners:
+    get:
+      tags: [Admin Reference]
+      summary: Device Partners
+      description: |
+        Available to `IOH_ADMIN` and `MPX_ADMIN` — the two roles that order from,
+        or supply, a Device Partner. A `DP_ADMIN` has no need to enumerate its
+        competitors and receives 403.
+      security: [{ adminBearerAuth: [] }]
+      operationId: listDevicePartners
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/DevicePartnerRef" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /admin/reference/mpx:
+    get:
+      tags: [Admin Reference]
+      summary: MPX stock points
+      description: |
+        Available to `IOH_ADMIN` and `DP_ADMIN`. An `MPX_ADMIN` already knows which
+        MPX it is — that is on `GET /admin/me` — and has no reason to enumerate
+        the others, so it receives 403.
+      security: [{ adminBearerAuth: [] }]
+      operationId: listMpx
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/MpxRef" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # ===================================================================
+  # MSISDN PO  —  DP requests numbers, IOH supplies them
+  #
+  # One feature seen from two sides. No request body here carries a
+  # status, a poCode, or an organisation id: transitions are named
+  # actions, codes are server-generated, and the org comes from the token.
+  # ===================================================================
+  /admin/msisdn-pos:
+    get:
+      tags: [MSISDN PO]
+      summary: List MSISDN requests
+      description: |
+        A Device Partner sees only its own requests. `IOH_ADMIN` sees every
+        partner's, because IOH is the counterparty to all of them.
+      security: [{ adminBearerAuth: [] }]
+      operationId: listMsisdnPos
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/MsisdnPoStatus" }
+        - name: q
+          in: query
+          description: Matches the PO code.
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Paginated"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/MsisdnPo" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [MSISDN PO]
+      summary: Raise an MSISDN request
+      description: |
+        `DP_ADMIN` only. The PO code is generated server-side in the format
+        `{DP_CODE}-{YYYYMMDD}-{SEQ}` and is never accepted from a client.
+      security: [{ adminBearerAuth: [] }]
+      operationId: createMsisdnPo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [callPlanId, brandCode, qtyRequested]
+              properties:
+                callPlanId: { type: string, format: uuid }
+                brandCode:  { type: string, minLength: 1, maxLength: 10, examples: ["IM3"] }
+                qtyRequested:
+                  type: integer
+                  minimum: 1
+                  maximum: 100000
+                note: { type: string, maxLength: 500 }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MsisdnPo" }
+        "400": { $ref: "#/components/responses/MalformedBody" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /admin/msisdn-pos/{poId}:
+    get:
+      tags: [MSISDN PO]
+      summary: One MSISDN request, with its status history
+      security: [{ adminBearerAuth: [] }]
+      operationId: getMsisdnPo
+      parameters: [{ $ref: "#/components/parameters/PoId" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MsisdnPoDetail" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /admin/msisdn-pos/{poId}/msisdns:
+    get:
+      tags: [MSISDN PO]
+      summary: The numbers issued against this request
+      description: |
+        Backs the download icon on a supplied PO.
+
+        `xlsx` is deliberately not offered. Generating it would mean adding a
+        spreadsheet dependency, and this project does not add one without asking;
+        CSV opens in Excel.
+      security: [{ adminBearerAuth: [] }]
+      operationId: listMsisdnPoNumbers
+      parameters:
+        - $ref: "#/components/parameters/PoId"
+        - name: format
+          in: query
+          schema: { type: string, enum: [json, csv], default: json }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/IssuedMsisdn" }
+            text/csv:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /admin/msisdn-pos/{poId}/process:
+    post:
+      tags: [MSISDN PO]
+      summary: IOH picks the request up
+      description: "Transition: `DIAJUKAN` → `DIPROSES`. `IOH_ADMIN` only."
+      security: [{ adminBearerAuth: [] }]
+      operationId: processMsisdnPo
+      parameters: [{ $ref: "#/components/parameters/PoId" }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NoteBody" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MsisdnPo" }
+        "400": { $ref: "#/components/responses/MalformedBody" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/InvalidTransition" }
+
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /admin/msisdn-pos/{poId}/reject:
+    post:
+      tags: [MSISDN PO]
+      summary: IOH declines the request
+      description: |
+        Transition: `DIAJUKAN` or `DIPROSES` → `DITOLAK`. `IOH_ADMIN` only.
+
+        The reason is mandatory, in the schema and again in the database. A
+        request IOH will not fulfil has to have somewhere to go — without this it
+        sits at `DIAJUKAN` forever and the Device Partner has no signal to act on.
+      security: [{ adminBearerAuth: [] }]
+      operationId: rejectMsisdnPo
+      parameters: [{ $ref: "#/components/parameters/PoId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RejectBody" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MsisdnPo" }
+        "400": { $ref: "#/components/responses/MalformedBody" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/InvalidTransition" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /admin/msisdn-pos/{poId}/cancel:
+    post:
+      tags: [MSISDN PO]
+      summary: DP withdraws the request
+      description: "Transition: `DIAJUKAN` → `DIBATALKAN`, only while IOH has not acted."
+      security: [{ adminBearerAuth: [] }]
+      operationId: cancelMsisdnPo
+      parameters: [{ $ref: "#/components/parameters/PoId" }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NoteBody" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MsisdnPo" }
+        "400": { $ref: "#/components/responses/MalformedBody" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/InvalidTransition" }
+
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /admin/msisdn-pos/{poId}/supply:validate:
+    post:
+      tags: [MSISDN PO]
+      summary: Dry run of an MSISDN import
+      description: |
+        Writes nothing. The operator must see 400 parsed numbers before committing
+        400, so the drop zone calls this first and renders `accepted` and `errors`.
+
+        MSISDNs may arrive in `08…` or `62…` form; they are normalised to `62`
+        before validation, or a perfectly good spreadsheet column would be
+        rejected by a CHECK the operator cannot see.
+      security: [{ adminBearerAuth: [] }]
+      operationId: validateMsisdnSupply
+      parameters: [{ $ref: "#/components/parameters/PoId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SupplyBody" }
+      responses:
+        "200":
+          description: Parsed. Nothing was written.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupplyValidation" }
+        "400": { $ref: "#/components/responses/MalformedBody" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /admin/msisdn-pos/{poId}/supply:
+    post:
+      tags: [MSISDN PO]
+      summary: IOH supplies the numbers
+      description: |
+        Transition: `DIAJUKAN` or `DIPROSES` → `DITERIMA`. `IOH_ADMIN` only.
+
+        One transaction, all or nothing. The count must equal `qtyRequested`
+        exactly — a partially applied import is worse than a failed one, because
+        nothing about the result says which half landed.
+
+        Supplied numbers become `fwa_inventory` rows directly, at `MSISDN_ISSUED`
+        with no IMEI. There is no separate item table: a supplied number *is* a
+        unit. Those rows are invisible to the AE mobile app until allocation.
+
+        Honours `Idempotency-Key`: a retry after a dropped response returns the
+        original result instead of inserting the batch a second time.
+      security: [{ adminBearerAuth: [] }]
+      operationId: supplyMsisdns
+      parameters:
+        - $ref: "#/components/parameters/PoId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SupplyBody" }
+      responses:
+        "200":
+          description: Supplied
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupplyResult" }
+        "400": { $ref: "#/components/responses/MalformedBody" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/InvalidTransition" }
+        "422":
+          description: |
+            Count mismatch (`QTY_MISMATCH`), a malformed number (`INVALID_MSISDN`),
+            a duplicate within the batch (`DUPLICATE_MSISDN`), or a number already
+            issued (`MSISDN_ALREADY_ISSUED`). Nothing is written in any case.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /admin/msisdn-pos/{poId}/pairing:
+    get:
+      tags: [Hard Bundle]
+      summary: Numbers on this PO still awaiting an IMEI
+      security: [{ adminBearerAuth: [] }]
+      operationId: getPairingWorklist
+      parameters: [{ $ref: "#/components/parameters/PoId" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/IssuedMsisdn" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [Hard Bundle]
+      summary: Pair an IMEI to every number on this PO
+      description: |
+        `DP_ADMIN` only, on a PO at `DITERIMA`.
+
+        The IMEI count must equal the unpaired MSISDN count exactly, and every
+        IMEI must be unique platform-wide. A partial pairing is rejected rather
+        than applied — half a bundle is a unit nobody can ship and nobody can find.
+
+        Honours `Idempotency-Key`.
+      security: [{ adminBearerAuth: [] }]
+      operationId: pairBundles
+      parameters:
+        - $ref: "#/components/parameters/PoId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PairingBody" }
+      responses:
+        "200":
+          description: Paired
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PairingResult" }
+        "400": { $ref: "#/components/responses/MalformedBody" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/InvalidTransition" }
+        "422":
+          description: |
+            `IMEI_COUNT_MISMATCH` when the counts differ, or `PAIRING_REJECTED`
+            with a per-row reason. Nothing is written in either case.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /admin/msisdn-pos/{poId}/pairing:validate:
+    post:
+      tags: [Hard Bundle]
+      summary: Dry run of an IMEI pairing batch
+      description: Writes nothing. Shares its checks with the real endpoint so the preview cannot drift.
+      security: [{ adminBearerAuth: [] }]
+      operationId: validatePairing
+      parameters: [{ $ref: "#/components/parameters/PoId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PairingBody" }
+      responses:
+        "200":
+          description: Parsed. Nothing was written.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PairingValidation" }
+        "400": { $ref: "#/components/responses/MalformedBody" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  # ===================================================================
+  # DEVICE PO  —  MPX orders, the Device Partner fulfils
+  # ===================================================================
+  /admin/device-pos:
+    get:
+      tags: [Device PO]
+      summary: List device orders
+      description: An MPX sees its own orders, a DP sees orders placed with it, IOH sees all.
+      security: [{ adminBearerAuth: [] }]
+      operationId: listDevicePos
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/DevicePoStatus" }
+        - name: q
+          in: query
+          description: Matches the PO code.
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Paginated"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/DevicePo" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [Device PO]
+      summary: Raise a device order
+      description: |
+        `MPX_ADMIN` only.
+
+        `unitPriceIdr` is snapshotted from the catalogue at creation and never
+        read back, so a later price change cannot rewrite the value of a closed
+        order. A model with no confirmed price is refused with `MODEL_NOT_PRICED`
+        rather than ordered at a guess.
+
+        `addressId` must belong to the calling MPX; another MPX's address reads
+        as absent, not as forbidden.
+      security: [{ adminBearerAuth: [] }]
+      operationId: createDevicePo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [devicePartnerId, deviceModelId, brandCode, qty, addressId]
+              properties:
+                devicePartnerId: { type: string, format: uuid }
+                deviceModelId:   { type: string, format: uuid }
+                brandCode:       { type: string, minLength: 1, maxLength: 10 }
+                qty:             { type: integer, minimum: 1, maximum: 100000 }
+                addressId:       { type: string, format: uuid }
+                picName:         { type: string, maxLength: 150 }
+                picPhone:        { type: string, maxLength: 20 }
+                note:            { type: string, maxLength: 500 }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DevicePo" }
+        "400": { $ref: "#/components/responses/MalformedBody" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /admin/device-pos/{poId}:
+    get:
+      tags: [Device PO]
+      summary: One device order, with the Riwayat history and delivery address
+      description: |
+        `statusHistory` is what the *Riwayat* panel renders, straight through. It
+        is trustworthy only because every transition writes a row in the same
+        transaction as the status change.
+      security: [{ adminBearerAuth: [] }]
+      operationId: getDevicePo
+      parameters: [{ $ref: "#/components/parameters/PoId" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DevicePoDetail" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /admin/device-pos/{poId}/bundles:
+    get:
+      tags: [Device PO]
+      summary: The units attached to this order
+      description: Backs the *Detail IMEI & MSISDN* modal.
+      security: [{ adminBearerAuth: [] }]
+      operationId: listDevicePoBundles
+      parameters: [{ $ref: "#/components/parameters/PoId" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Bundle" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [Device PO]
+      summary: DP attaches bundles to the order
+      description: |
+        `DP_ADMIN` only, on an order at `DIPROSES`.
+
+        Each MSISDN must be a paired, unattached bundle that reached this Device
+        Partner through its own MSISDN PO — that last condition is what stops a
+        partner attaching a competitor's stock. The attached count must equal
+        `qty` exactly.
+
+        Attached units move to `ASSIGNED` and pick up the destination MPX. Rows
+        are locked `FOR UPDATE` so two admins cannot commit the same bundle to
+        two different orders.
+
+        Honours `Idempotency-Key`.
+      security: [{ adminBearerAuth: [] }]
+      operationId: attachDevicePoBundles
+      parameters:
+        - $ref: "#/components/parameters/PoId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AttachBundlesBody" }
+      responses:
+        "200":
+          description: Attached
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AttachBundlesResult" }
+        "400": { $ref: "#/components/responses/MalformedBody" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/InvalidTransition" }
+        "422":
+          description: |
+            `QTY_MISMATCH`, `BUNDLES_REJECTED` with a per-row reason, or
+            `BUNDLE_ALREADY_ATTACHED` when another order claimed a unit first.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /admin/device-pos/{poId}/bundles:validate:
+    post:
+      tags: [Device PO]
+      summary: Dry run of a bundle attachment
+      security: [{ adminBearerAuth: [] }]
+      operationId: validateDevicePoBundles
+      parameters: [{ $ref: "#/components/parameters/PoId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AttachBundlesBody" }
+      responses:
+        "200":
+          description: Parsed. Nothing was written.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AttachBundlesValidation" }
+        "400": { $ref: "#/components/responses/MalformedBody" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /admin/device-pos/{poId}/accept:
+    post:
+      tags: [Device PO]
+      summary: DP accepts the order
+      description: "Transition: `DIAJUKAN` → `DIPROSES`. `DP_ADMIN` only."
+      security: [{ adminBearerAuth: [] }]
+      operationId: acceptDevicePo
+      parameters: [{ $ref: "#/components/parameters/PoId" }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NoteBody" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DevicePo" }
+        "400": { $ref: "#/components/responses/MalformedBody" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/InvalidTransition" }
+
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /admin/device-pos/{poId}/reject:
+    post:
+      tags: [Device PO]
+      summary: DP declines the order
+      description: "Transition: `DIAJUKAN` → `DITOLAK`. Reason mandatory."
+      security: [{ adminBearerAuth: [] }]
+      operationId: rejectDevicePo
+      parameters: [{ $ref: "#/components/parameters/PoId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RejectBody" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DevicePo" }
+        "400": { $ref: "#/components/responses/MalformedBody" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/InvalidTransition" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /admin/device-pos/{poId}/cancel:
+    post:
+      tags: [Device PO]
+      summary: MPX withdraws the order
+      description: "Transition: `DIAJUKAN` → `DIBATALKAN`, only before the DP accepts."
+      security: [{ adminBearerAuth: [] }]
+      operationId: cancelDevicePo
+      parameters: [{ $ref: "#/components/parameters/PoId" }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NoteBody" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DevicePo" }
+        "400": { $ref: "#/components/responses/MalformedBody" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/InvalidTransition" }
+
+        "422": { $ref: "#/components/responses/ValidationError" }
+  # ===================================================================
+  # ACCOUNT EXECUTIVES  —  MPX only
+  # ===================================================================
+  /admin/account-executives:
+    get:
+      tags: [Account Executives]
+      summary: Account Executives drawing stock from this MPX
+      description: |
+        Backs the *Nama AE* dropdown on the stock allocation modal.
+
+        `MPX_ADMIN` only, scoped to `account_executive.mpx_code` = the caller's own
+        MPX code. No parameter widens that scope.
+      security: [{ adminBearerAuth: [] }]
+      operationId: listAccountExecutives
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+        - name: q
+          in: query
+          description: Matches AE code or full name.
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Paginated"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/AdminAccountExecutive" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /admin/account-executives/{aeId}:
+    get:
+      tags: [Account Executives]
+      summary: One AE, with what they are currently holding
+      description: |
+        Backs the *Tentang AE* panel — `ID`, `Brand`, `Branch`, and current stock.
+
+        An AE drawing stock from another MPX returns 404, not 403: a 403 would
+        confirm the record exists to a stock point that has no business knowing.
+      security: [{ adminBearerAuth: [] }]
+      operationId: getAccountExecutive
+      parameters:
+        - name: aeId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminAccountExecutiveDetail" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ===================================================================
+  # ADDRESSES  —  the MPX Alamat Penerima book
+  # ===================================================================
+  /admin/addresses:
+    get:
+      tags: [Addresses]
+      summary: Delivery addresses for this MPX
+      description: Default first, then alphabetical — the PO form preselects the default.
+      security: [{ adminBearerAuth: [] }]
+      operationId: listAddresses
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Paginated"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/DeliveryAddress" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [Addresses]
+      summary: Add a delivery address
+      description: |
+        Backs *Tambah baru* on the device PO form. `mpxId` is deliberately absent from
+        the body — the address belongs to whichever MPX is calling, taken from the token.
+
+        Setting a new default clears the old one in the same transaction; a partial
+        unique index enforces one default per MPX, so two concurrent attempts cannot
+        both win. Latitude and longitude must be supplied together or not at all.
+      security: [{ adminBearerAuth: [] }]
+      operationId: createAddress
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateAddressBody" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeliveryAddress" }
+        "400": { $ref: "#/components/responses/MalformedBody" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /admin/addresses/{addressId}:
+    get:
+      tags: [Addresses]
+      summary: One address, in full
+      description: Backs the *Alamat Lengkap* modal. Another MPX's address reads as absent.
+      security: [{ adminBearerAuth: [] }]
+      operationId: getAddress
+      parameters:
+        - name: addressId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeliveryAddress" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ===================================================================
+  # SHIPMENT
+  # ===================================================================
+  /admin/device-pos/{poId}/shipment:
+    post:
+      tags: [Shipment]
+      summary: DP ships the order
+      description: |
+        Transition `DIPROSES` → `DIKIRIM`. `DP_ADMIN` only.
+
+        This is the screen the UI review found missing entirely (issue #1): the Riwayat
+        panel already displayed a courier and resi, and nothing produced them. Submitting
+        writes `{courier} | {awb}` into the status history, which is what that panel
+        renders.
+
+        `courierName` is free text — couriers are manual for v1, so there is no
+        reference table to validate against.
+
+        Refused unless every unit is attached. Receipt is all-or-nothing, so shipping a
+        short order guarantees a receipt that can never be confirmed; better to fail
+        while the boxes are still in the warehouse.
+      security: [{ adminBearerAuth: [] }]
+      operationId: createShipment
+      parameters: [{ $ref: "#/components/parameters/PoId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateShipmentBody" }
+      responses:
+        "200":
+          description: Shipped
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Shipment" }
+        "400": { $ref: "#/components/responses/MalformedBody" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/InvalidTransition" }
+        "422":
+          description: "`ORDER_NOT_FULLY_ATTACHED` — some units are still unattached."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    get:
+      tags: [Shipment]
+      summary: Delivery progress for this order
+      description: |
+        Backs the four-step Delivery Progress tracker. Milestones come back in tracker
+        order rather than insertion order, so the client renders them without sorting.
+      security: [{ adminBearerAuth: [] }]
+      operationId: getShipment
+      parameters: [{ $ref: "#/components/parameters/PoId" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Shipment" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /admin/shipments/{shipmentId}/milestones:
+    post:
+      tags: [Shipment]
+      summary: Record a delivery milestone
+      description: |
+        Entered by hand by the Device Partner — there is no courier integration in v1,
+        so this takes an admin token rather than a service credential. If a courier
+        webhook is added later it becomes a second credential on this one route, with
+        no schema change.
+
+        Each milestone is recorded once; repeating one would draw a progress bar that
+        goes backwards.
+      security: [{ adminBearerAuth: [] }]
+      operationId: addShipmentMilestone
+      parameters:
+        - name: shipmentId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MilestoneBody" }
+      responses:
+        "200":
+          description: Recorded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Shipment" }
+        "400": { $ref: "#/components/responses/MalformedBody" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: "`MILESTONE_ALREADY_RECORDED`."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  # ===================================================================
+  # GOODS RECEIPT
+  # ===================================================================
+  /admin/device-pos/{poId}/inspect:
+    post:
+      tags: [Goods Receipt]
+      summary: MPX opens the delivery
+      description: "Transition `DIKIRIM` → `PERIKSA`. `MPX_ADMIN` only."
+      security: [{ adminBearerAuth: [] }]
+      operationId: inspectDevicePo
+      parameters: [{ $ref: "#/components/parameters/PoId" }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NoteBody" }
+      responses:
+        "200":
+          description: Inspecting
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/DevicePoStatus" }
+        "400": { $ref: "#/components/responses/MalformedBody" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/InvalidTransition" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /admin/device-pos/{poId}/receipt:
+    post:
+      tags: [Goods Receipt]
+      summary: MPX confirms the whole delivery
+      description: |
+        Transition `PERIKSA` → `DITERIMA`. `MPX_ADMIN` only.
+
+        **One final, all-or-nothing confirmation.** If the box is short this returns
+        `422 RECEIPT_INCOMPLETE`, nothing is written, and the order stays at `PERIKSA`.
+        Confirmed 2026-09-01: the reshipping happens entirely outside this system, and
+        the MPX confirms only once the full list is physically present. That is why
+        there is no partial-receipt state — the alternative was an MPX admin personally
+        attesting to units they never received.
+
+        Confirmed units move to `RECEIVED` and are stamped with `receivedAt`, which is
+        the key automatic allocation orders by.
+      security: [{ adminBearerAuth: [] }]
+      operationId: confirmReceipt
+      parameters: [{ $ref: "#/components/parameters/PoId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReceiptBody" }
+      responses:
+        "200":
+          description: Received
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GoodsReceipt" }
+        "400": { $ref: "#/components/responses/MalformedBody" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/InvalidTransition" }
+        "422":
+          description: |
+            `RECEIPT_INCOMPLETE` when units are missing, or `CONFIRMATION_REQUIRED`
+            when the attestation was not checked. Nothing is written in either case.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    get:
+      tags: [Goods Receipt]
+      summary: The receipt for this order
+      security: [{ adminBearerAuth: [] }]
+      operationId: getReceipt
+      parameters: [{ $ref: "#/components/parameters/PoId" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GoodsReceipt" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ===================================================================
+  # STOCK & ALLOCATION  —  where the seam closes
+  # ===================================================================
+  /admin/stock:
+    get:
+      tags: [Stock & Allocation]
+      summary: Stock this MPX holds, by device model
+      description: |
+        Backs the *Stok Tersedia* table. The three columns are defined here because the
+        mockups were arithmetically impossible (issue #5 showed available 20 +
+        allocated 21 = total 10):
+
+        * `available` — `RECEIVED` and not yet allocated (*Jml. Tersedia*)
+        * `allocated` — `ALLOCATED` and not yet activated (*Jml. Dialokasikan*)
+        * `total` — the two added: everything this MPX still holds
+
+        An activated unit has been sold to a customer and leaves all three counts.
+      security: [{ adminBearerAuth: [] }]
+      operationId: getStockSummary
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/StockLine" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /admin/stock/bundles:
+    get:
+      tags: [Stock & Allocation]
+      summary: Individual allocatable units, oldest received first
+      description: |
+        Backs the Manual picker. Ordered by `receivedAt` — the *Tgl. Terima* column —
+        exactly as automatic allocation would take them, so the top of this list is
+        what Otomatis would have chosen.
+      security: [{ adminBearerAuth: [] }]
+      operationId: listStockBundles
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+        - name: deviceModelId
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Paginated"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/StockBundle" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /admin/allocations:
+    get:
+      tags: [Stock & Allocation]
+      summary: Allocations made by this MPX
+      security: [{ adminBearerAuth: [] }]
+      operationId: listAllocations
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Paginated"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/Allocation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [Stock & Allocation]
+      summary: Allocate stock to an Account Executive
+      description: |
+        **The end of the chain, and the only writer of
+        `fwa_inventory.allocated_ae_id`.** After this call the units are visible to that
+        salesman's barcode scanner; before it, nothing in the supply chain is.
+
+        Same discipline as `activation.activationDate`, which only the GA feed may set:
+        the value decides what a salesman is allowed to sell, so a second writer would
+        be a way to give away somebody else's stock.
+
+        `aeId` in the body is deliberate and is why this is an admin-audience route.
+        Golden rule 2 still holds on the AE audience — the caller is confined to its own
+        MPX by the token, and an AE drawing stock from another MPX reads as absent.
+
+        * `AUTO` — takes the oldest `RECEIVED` units per model, FIFO on *Tgl. Terima*,
+          under `FOR UPDATE SKIP LOCKED`. Two admins allocating the last unit produce
+          one success and one clean `409 INSUFFICIENT_STOCK`, never two handovers of the
+          same device.
+        * `MANUAL` — the units are named outright.
+
+        All or nothing: a partial allocation is never written.
+      security: [{ adminBearerAuth: [] }]
+      operationId: allocateStock
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateAllocationBody" }
+      responses:
+        "201":
+          description: Allocated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AllocationDetail" }
+        "400": { $ref: "#/components/responses/MalformedBody" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: "`INSUFFICIENT_STOCK` — fewer units available than requested."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: |
+            `AE_NOT_FOUND` (unknown, or drawing stock from another MPX),
+            `BUNDLE_NOT_ALLOCATABLE`, `ITEMS_REQUIRED`, or `MSISDNS_REQUIRED`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   # ===================================================================
   # CUSTOMERS
@@ -230,6 +1638,7 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/CustomerCreate" }
       responses:
+        "400": { $ref: "#/components/responses/MalformedBody" }
         "201":
           description: Created
           content:
@@ -262,6 +1671,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/CustomerDetail" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
     patch:
       tags: [Customers]
       summary: Update a prospect
@@ -283,6 +1693,7 @@ paths:
                 status: { $ref: "#/components/schemas/CustomerStatus" }
                 statusNote: { type: string }
       responses:
+        "400": { $ref: "#/components/responses/MalformedBody" }
         "200":
           description: Updated
           content:
@@ -291,6 +1702,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/ValidationError" }
 
+        "401": { $ref: "#/components/responses/Unauthorized" }
   /customers/lookup:
     get:
       tags: [Customers]
@@ -330,6 +1742,7 @@ paths:
                         fullName:   { type: string, examples: ["Susanto"] }
                         label:      { type: string, examples: ["1234567890 - Susanto"] }
 
+        "401": { $ref: "#/components/responses/Unauthorized" }
   # ===================================================================
   # INVENTORY  (barcode scanner)
   # ===================================================================
@@ -391,6 +1804,7 @@ paths:
                         type: array
                         items: { $ref: "#/components/schemas/InventoryItem" }
 
+        "401": { $ref: "#/components/responses/Unauthorized" }
   # ===================================================================
   # ACTIVATIONS
   # ===================================================================
@@ -431,6 +1845,7 @@ paths:
                         items: { $ref: "#/components/schemas/Activation" }
         "422": { $ref: "#/components/responses/DateRangeError" }
 
+        "401": { $ref: "#/components/responses/Unauthorized" }
     post:
       tags: [Activations]
       summary: Submit a customer activation
@@ -453,6 +1868,7 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/ActivationCreate" }
       responses:
+        "400": { $ref: "#/components/responses/MalformedBody" }
         "201":
           description: Created
           content:
@@ -496,6 +1912,7 @@ paths:
               schema: { $ref: "#/components/schemas/Activation" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+        "401": { $ref: "#/components/responses/Unauthorized" }
   # ===================================================================
   # ATTENDANCE
   # ===================================================================
@@ -531,6 +1948,7 @@ paths:
                 document:  { type: string, format: binary, description: "Dokumen (Opsional)" }
                 deviceTime: { type: string, format: date-time }
       responses:
+        "400": { $ref: "#/components/responses/MalformedBody" }
         "201":
           description: Checked in
           content:
@@ -543,6 +1961,7 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "422": { $ref: "#/components/responses/ValidationError" }
 
+        "401": { $ref: "#/components/responses/Unauthorized" }
   /attendance/check-out:
     post:
       tags: [Attendance]
@@ -561,6 +1980,7 @@ paths:
                 isMocked:  { type: boolean, default: false }
                 deviceTime: { type: string, format: date-time }
       responses:
+        "400": { $ref: "#/components/responses/MalformedBody" }
         "200":
           description: Checked out
           content:
@@ -573,6 +1993,7 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "422": { $ref: "#/components/responses/ValidationError" }
 
+        "401": { $ref: "#/components/responses/Unauthorized" }
   /attendance/today:
     get:
       tags: [Attendance]
@@ -591,6 +2012,7 @@ paths:
                       - $ref: "#/components/schemas/Attendance"
                       - type: "null"
 
+        "401": { $ref: "#/components/responses/Unauthorized" }
   /attendance:
     get:
       tags: [Attendance]
@@ -616,6 +2038,7 @@ paths:
                         items: { $ref: "#/components/schemas/Attendance" }
         "422": { $ref: "#/components/responses/DateRangeError" }
 
+        "401": { $ref: "#/components/responses/Unauthorized" }
   # ===================================================================
   # REPORTS
   # ===================================================================
@@ -645,6 +2068,7 @@ paths:
                   data: { $ref: "#/components/schemas/ReportSummary" }
         "422": { $ref: "#/components/responses/DateRangeError" }
 
+        "401": { $ref: "#/components/responses/Unauthorized" }
   /reports/daily-activity:
     get:
       tags: [Reports]
@@ -671,6 +2095,7 @@ paths:
                     items: { $ref: "#/components/schemas/DailyActivity" }
         "422": { $ref: "#/components/responses/DateRangeError" }
 
+        "401": { $ref: "#/components/responses/Unauthorized" }
   /reports/incentives:
     get:
       tags: [Reports]
@@ -696,6 +2121,7 @@ paths:
                         type: array
                         items: { $ref: "#/components/schemas/IncentiveEntry" }
 
+        "401": { $ref: "#/components/responses/Unauthorized" }
   # ===================================================================
   # SYNC
   # ===================================================================
@@ -730,6 +2156,7 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/Customer" }
 
+        "401": { $ref: "#/components/responses/Unauthorized" }
   # ===================================================================
   # FILES
   #
@@ -815,6 +2242,7 @@ paths:
                         enum: [ACTIVATED, FAILED]
                         default: ACTIVATED
       responses:
+        "400": { $ref: "#/components/responses/MalformedBody" }
         "202":
           description: Accepted
           content:
@@ -840,6 +2268,18 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: Short-lived access token from `/auth/login`.
+    adminBearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Short-lived access token from `/admin/auth/login`, carrying `aud: "admin"`.
+
+        This is a different audience from `bearerAuth`, not merely a different
+        token. An AE token presented to an `/admin` route is rejected because it
+        carries no audience claim; an admin token presented to an AE route is
+        rejected because it carries one the AE decoder does not expect. The
+        separation is enforced at the JWT layer, before any handler runs.
     serviceAuth:
       type: apiKey
       in: header
@@ -871,6 +2311,11 @@ components:
       name: perPage
       in: query
       schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    PoId:
+      name: poId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     IdempotencyKey:
       name: Idempotency-Key
       in: header
@@ -887,11 +2332,51 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: |
+        The role of the caller does not permit this action.
+
+        Admin-audience only. AE routes never return 403 — there a missing record and
+        another AE record are both 404, because a 403 would confirm the record exists.
+        On the dashboard no such inference is available: the sidebar already tells a
+        Device Partner that MPX screens exist, so naming the role boundary leaks nothing.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
     NotFound:
       description: Resource does not exist, or does not belong to this AE.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
+    InvalidTransition:
+      description: |
+        The order is not in a state where this action means anything —
+        `INVALID_TRANSITION`.
+
+        409 rather than 422 because nothing about the request is malformed. In
+        practice this is usually a stale browser tab acting on an order somebody
+        else has already moved on.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    MalformedBody:
+      description: |
+        The request body could not be read. Returned by the ASGI layer before any
+        validation runs — most often a body that is not decodable as UTF-8, or a
+        truncated upload. Distinct from `422`, which means the body parsed but its
+        contents were rejected.
+
+        Declared on every operation that takes a body, because it can occur on all of
+        them and a client branching on status codes should not meet an undocumented one.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          examples:
+            malformed:
+              value:
+                error:
+                  code: HTTP_ERROR
+                  message: "There was an error parsing the body"
     ValidationError:
       description: Request failed validation.
       content:
@@ -973,6 +2458,704 @@ components:
           type: boolean
           description: True on first login with an HQ-issued password.
         profile: { $ref: "#/components/schemas/AccountExecutive" }
+
+    CreateAddressBody:
+      type: object
+      required: [label, recipientName, recipientPhone, line1, city, province]
+      properties:
+        label:          { type: string, minLength: 1, maxLength: 60, examples: ["Gudang Utama"] }
+        recipientName:  { type: string, minLength: 1, maxLength: 150 }
+        recipientPhone:
+          type: string
+          pattern: "^(62|0)[0-9]{8,13}$"
+          description: A contact number, stored as typed in 08… or 62… form.
+          examples: ["081234567890"]
+        line1:      { type: string, minLength: 1 }
+        kelurahan:  { type: string, maxLength: 120 }
+        kecamatan:  { type: string, maxLength: 120 }
+        city:       { type: string, minLength: 1, maxLength: 120 }
+        province:   { type: string, minLength: 1, maxLength: 120 }
+        postalCode: { type: string, maxLength: 10 }
+        latitude:
+          type: number
+          minimum: -90
+          maximum: 90
+          description: Must be supplied together with longitude, or not at all.
+        longitude:  { type: number, minimum: -180, maximum: 180 }
+        gmapsUrl:   { type: string }
+        isDefault:  { type: boolean, default: false }
+
+    CreateShipmentBody:
+      type: object
+      required: [courierName, awb]
+      properties:
+        courierName:
+          type: string
+          minLength: 1
+          maxLength: 60
+          description: Free text — couriers are manual for v1, with no reference table.
+          examples: ["J&T Express"]
+        awb:
+          type: string
+          minLength: 1
+          maxLength: 60
+          description: Nomor Resi — the proof of dispatch.
+          examples: ["JD0463672772"]
+        estimatedDeliveryDate: { type: string, format: date }
+        note: { type: string, maxLength: 500 }
+
+    ShipmentMilestoneType:
+      type: string
+      description: The four steps of the Delivery Progress tracker, in order.
+      enum: [SHIPPED, IN_TRANSIT, OUT_FOR_DELIVERY, DELIVERED]
+
+    MilestoneBody:
+      type: object
+      required: [milestone]
+      properties:
+        milestone: { $ref: "#/components/schemas/ShipmentMilestoneType" }
+        occurredAt:
+          type: string
+          format: date-time
+          description: Defaults to now. The server remains authoritative on time.
+        note: { type: string, maxLength: 500 }
+
+    Shipment:
+      type: object
+      required: [shipmentId, devicePoId, courierName, awb, shippedAt, milestones]
+      properties:
+        shipmentId:  { type: string, format: uuid }
+        devicePoId:  { type: string, format: uuid }
+        courierName: { type: string, examples: ["J&T Express"] }
+        awb:         { type: string, examples: ["JD0463672772"] }
+        shippedAt:   { type: string, format: date-time }
+        estimatedDeliveryDate: { type: string, format: date }
+        deliveredAt: { type: string, format: date-time }
+        milestones:
+          type: array
+          description: In tracker order, not insertion order.
+          items:
+            type: object
+            required: [milestone, occurredAt]
+            properties:
+              milestone:  { $ref: "#/components/schemas/ShipmentMilestoneType" }
+              occurredAt: { type: string, format: date-time }
+              note:       { type: string }
+
+    ReceiptBody:
+      type: object
+      required: [confirmed]
+      properties:
+        confirmed:
+          type: boolean
+          description: |
+            The attestation, and it must be true. It names a person in the UI and is
+            what the status-history *oleh* column records.
+        note: { type: string, maxLength: 500 }
+
+    GoodsReceipt:
+      type: object
+      required: [goodsReceiptId, devicePoId, status, qtyReceived, receivedAt]
+      properties:
+        goodsReceiptId: { type: string, format: uuid }
+        devicePoId:     { type: string, format: uuid }
+        status:         { $ref: "#/components/schemas/DevicePoStatus" }
+        qtyReceived:    { type: integer }
+        receivedAt:     { type: string, format: date-time }
+        receivedBy:     { type: string, examples: ["Atha Marcella"] }
+        note:           { type: string }
+
+    StockLine:
+      type: object
+      required: [available, allocated, total]
+      properties:
+        deviceModelId:   { type: string, format: uuid }
+        deviceModelCode: { type: string, examples: ["ADVAN V1 PRO"] }
+        available: { type: integer, description: RECEIVED and not yet allocated. }
+        allocated: { type: integer, description: ALLOCATED and not yet activated. }
+        total:     { type: integer, description: available + allocated. }
+
+    StockBundle:
+      type: object
+      required: [msisdn]
+      properties:
+        msisdn: { type: string }
+        imei:
+          oneOf:
+            - type: string
+            - type: "null"
+        deviceModelCode: { type: string }
+        brandCode:       { type: string }
+        receivedAt:
+          type: string
+          format: date-time
+          description: The *Tgl. Terima* column, and the key AUTO allocation orders by.
+
+    AllocationMode:
+      type: string
+      enum: [AUTO, MANUAL]
+
+    CreateAllocationBody:
+      type: object
+      required: [aeId, mode]
+      properties:
+        aeId:
+          type: string
+          format: uuid
+          description: |
+            The salesman receiving the stock. Naming another principal is the point of
+            an admin-audience route; the caller is still confined to its own MPX by the
+            token.
+        mode: { $ref: "#/components/schemas/AllocationMode" }
+        items:
+          type: array
+          description: AUTO mode — how many of each device model.
+          items:
+            type: object
+            required: [deviceModelId, qty]
+            properties:
+              deviceModelId: { type: string, format: uuid }
+              qty: { type: integer, minimum: 1, maximum: 100000 }
+        msisdns:
+          type: array
+          description: MANUAL mode — the exact units.
+          items: { type: string }
+        note: { type: string, maxLength: 500 }
+
+    Allocation:
+      type: object
+      required: [stockAllocationId, aeId, mode, qty, allocatedAt]
+      properties:
+        stockAllocationId: { type: string, format: uuid }
+        aeId:   { type: string, format: uuid }
+        aeCode: { type: string, examples: ["AE-BENGKULU1"] }
+        mode:   { $ref: "#/components/schemas/AllocationMode" }
+        qty:    { type: integer }
+        allocatedAt: { type: string, format: date-time }
+        allocatedBy: { type: string }
+        note:        { type: string }
+
+    AllocationDetail:
+      allOf:
+        - $ref: "#/components/schemas/Allocation"
+        - type: object
+          required: [msisdns]
+          properties:
+            msisdns:
+              type: array
+              description: The units handed over. Each is now visible to that AE.
+              items: { type: string }
+
+    BrandScope:
+      type: string
+      description: |
+        Which telco brands an Account Executive may sell. `HYBRID` means either.
+
+        A capability of a person, and deliberately **not** a value in the `brand`
+        reference table — a physical SIM is one brand or the other, so a hybrid
+        unit would be meaningless, and putting it there would let it leak into
+        every `brandCode` in the supply chain.
+      enum: [IM3, "3ID", HYBRID]
+
+    AdminAccountExecutive:
+      type: object
+      description: The *Tentang AE* panel — ID, Brand, Branch.
+      required: [aeId, aeCode, fullName, status]
+      properties:
+        aeId:     { type: string, format: uuid }
+        aeCode:   { type: string, description: The panel's *ID*., examples: ["AE-BENGKULU2"] }
+        fullName: { type: string }
+        brandScope:
+          description: |
+            Present and **null** when not recorded. The panel always renders a Brand
+            row, so "not recorded" must be distinguishable from "not returned".
+
+            Nothing branches on this in v1 — it is displayed, not enforced.
+          oneOf:
+            - $ref: "#/components/schemas/BrandScope"
+            - type: "null"
+        region:
+          type: object
+          description: The panel's *Branch*.
+          properties:
+            regionCode: { type: string, examples: ["BENGKULU"] }
+            regionName: { type: string, examples: ["Bengkulu"] }
+        mpxCode: { type: string, examples: ["MPX-BKL-01"] }
+        status:
+          type: string
+          enum: [ACTIVE, SUSPENDED, INACTIVE]
+
+    AdminAccountExecutiveDetail:
+      allOf:
+        - $ref: "#/components/schemas/AdminAccountExecutive"
+        - type: object
+          required: [allocatedStock, allocatedTotal]
+          properties:
+            allocatedStock:
+              type: array
+              description: |
+                Units currently `ALLOCATED` to this AE, grouped by device model.
+                Activated units have left their stock and do not appear.
+              items:
+                type: object
+                properties:
+                  deviceModelCode: { type: string }
+                  count: { type: integer }
+            allocatedTotal: { type: integer }
+
+    MsisdnPoStatus:
+      type: string
+      description: |
+        `DIAJUKAN → DIPROSES → DITERIMA`, with `DIBATALKAN` (DP withdrew) and
+        `DITOLAK` (IOH refused) as terminal failures. Canonical values — the UI
+        translates for display, the API never does.
+      enum: [DIAJUKAN, DIPROSES, DITERIMA, DITOLAK, DIBATALKAN]
+
+    DevicePoStatus:
+      type: string
+      description: |
+        `DIAJUKAN → DIPROSES → DIKIRIM → PERIKSA → DITERIMA`, with `DIBATALKAN`
+        and `DITOLAK` as terminal failures.
+
+        There is no `DITERIMA_SEBAGIAN`. Confirmed 2026-09-01: MPX can only
+        confirm receipt when every unit is present, so a short shipment leaves
+        the order at `PERIKSA` rather than reaching a partial-receipt state.
+
+        The DP screen labels `DIKIRIM` as *Delivery* and the MPX screen as
+        *Dikirim*. One state, two words — `DIKIRIM` is canonical.
+      enum: [DIAJUKAN, DIPROSES, DIKIRIM, PERIKSA, DITERIMA, DITOLAK, DIBATALKAN]
+
+    StatusHistoryEntry:
+      type: object
+      description: One row of the *Riwayat* panel.
+      required: [changedAt, newStatus]
+      properties:
+        changedAt: { type: string, format: date-time }
+        oldStatus: { type: string }
+        newStatus: { type: string }
+        changedBy:
+          type: string
+          description: The *oleh* column — full name of the admin who acted.
+          examples: ["Atha Marcella"]
+        note:
+          type: string
+          description: The *keterangan* column.
+          examples: ["J&T Express | JD0463672772"]
+
+    NoteBody:
+      type: object
+      properties:
+        note: { type: string, maxLength: 500 }
+
+    RejectBody:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Surfaced to the counterparty so they can resubmit correctly.
+
+    MsisdnPo:
+      type: object
+      required: [msisdnPoId, poCode, qtyRequested, qtySupplied, status, submittedAt]
+      properties:
+        msisdnPoId: { type: string, format: uuid }
+        poCode:     { type: string, examples: ["ADVAN-20250523-207"] }
+        devicePartner: { $ref: "#/components/schemas/DevicePartnerRef" }
+        callPlan:      { $ref: "#/components/schemas/CallPlan" }
+        brand:         { $ref: "#/components/schemas/Brand" }
+        qtyRequested:  { type: integer }
+        qtySupplied:
+          type: integer
+          description: Numbers actually issued. Zero until IOH supplies.
+        status: { $ref: "#/components/schemas/MsisdnPoStatus" }
+        note:   { type: string }
+        rejectedReason:
+          description: Present and null when the request was not refused.
+          oneOf:
+            - type: string
+            - type: "null"
+        submittedAt: { type: string, format: date-time }
+        processedAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time }
+
+    MsisdnPoDetail:
+      allOf:
+        - $ref: "#/components/schemas/MsisdnPo"
+        - type: object
+          required: [statusHistory]
+          properties:
+            statusHistory:
+              type: array
+              items: { $ref: "#/components/schemas/StatusHistoryEntry" }
+
+    IssuedMsisdn:
+      type: object
+      required: [msisdn, status]
+      properties:
+        msisdn: { type: string, examples: ["6285882724305"] }
+        imei:
+          description: Null until the Device Partner pairs one.
+          oneOf:
+            - type: string
+            - type: "null"
+        status:   { type: string, examples: ["MSISDN_ISSUED"] }
+        pairedAt: { type: string, format: date-time }
+
+    SupplyBody:
+      type: object
+      required: [msisdns]
+      properties:
+        msisdns:
+          type: array
+          minItems: 1
+          maxItems: 100000
+          description: |
+            Accepted in `08…` or `62…` form and normalised to `62` before
+            validation. The dashboard parses the XLS and posts what it parsed.
+          items: { type: string }
+
+    SupplyValidation:
+      type: object
+      required: [ok, expected, received, accepted]
+      properties:
+        ok:       { type: boolean }
+        expected: { type: integer, description: The PO's qtyRequested. }
+        received: { type: integer }
+        accepted:
+          type: array
+          description: Normalised to 62 form.
+          items: { type: string }
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              value: { type: string }
+              issue: { type: string }
+
+    SupplyResult:
+      type: object
+      required: [msisdnPoId, status, supplied]
+      properties:
+        msisdnPoId: { type: string, format: uuid }
+        status:     { $ref: "#/components/schemas/MsisdnPoStatus" }
+        supplied:   { type: integer }
+
+    PairingRow:
+      type: object
+      required: [msisdn, imei]
+      properties:
+        msisdn: { type: string, examples: ["6285882724305"] }
+        imei:
+          type: string
+          minLength: 14
+          maxLength: 16
+          description: 15 digits in practice. An IMEI has no country code.
+          examples: ["355806671396654"]
+
+    PairingBody:
+      type: object
+      required: [pairs]
+      properties:
+        pairs:
+          type: array
+          minItems: 1
+          maxItems: 100000
+          items: { $ref: "#/components/schemas/PairingRow" }
+
+    PairingValidation:
+      type: object
+      required: [ok, expected, received, accepted]
+      properties:
+        ok:       { type: boolean }
+        expected: { type: integer, description: Unpaired numbers on this PO. }
+        received: { type: integer }
+        accepted:
+          type: array
+          items: { $ref: "#/components/schemas/PairingRow" }
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              value: { type: string }
+              issue: { type: string }
+
+    PairingResult:
+      type: object
+      required: [msisdnPoId, paired]
+      properties:
+        msisdnPoId: { type: string, format: uuid }
+        paired:     { type: integer }
+
+    DevicePo:
+      type: object
+      required: [devicePoId, poCode, qty, qtyAttached, unitPriceIdr, totalIdr, status, submittedAt]
+      properties:
+        devicePoId: { type: string, format: uuid }
+        poCode:
+          type: string
+          examples: ["PO-JAVA-3ID-RABIT CPE-R-28-20250809-407"]
+        mpx:             { $ref: "#/components/schemas/MpxRef" }
+        devicePartner:   { $ref: "#/components/schemas/DevicePartnerRef" }
+        deviceModelCode: { type: string, examples: ["ADVAN V1 PRO"] }
+        brand:           { $ref: "#/components/schemas/Brand" }
+        qty:             { type: integer }
+        qtyAttached:
+          type: integer
+          description: Bundles attached so far. Must equal qty before shipping.
+        unitPriceIdr:
+          type: integer
+          description: Whole rupiah, snapshotted at creation.
+          examples: [390000]
+        totalIdr:
+          type: integer
+          description: unitPriceIdr × qty, enforced by a database CHECK.
+          examples: [3900000]
+        status:   { $ref: "#/components/schemas/DevicePoStatus" }
+        picName:  { type: string }
+        picPhone: { type: string }
+        note:     { type: string }
+        rejectedReason:
+          oneOf:
+            - type: string
+            - type: "null"
+        submittedAt: { type: string, format: date-time }
+        acceptedAt:  { type: string, format: date-time }
+        completedAt: { type: string, format: date-time }
+
+    DeliveryAddress:
+      type: object
+      description: Every field the *Alamat Lengkap* modal renders.
+      required: [addressId, label, recipientName, recipientPhone, line1, city, province, isDefault]
+      properties:
+        addressId:      { type: string, format: uuid }
+        label:          { type: string, examples: ["Gudang Utama"] }
+        recipientName:  { type: string }
+        recipientPhone: { type: string }
+        line1:          { type: string }
+        kelurahan:      { type: string }
+        kecamatan:      { type: string }
+        city:           { type: string }
+        province:       { type: string }
+        postalCode:     { type: string }
+        latitude:       { type: number }
+        longitude:      { type: number }
+        gmapsUrl:       { type: string }
+        isDefault:      { type: boolean }
+
+    DevicePoDetail:
+      allOf:
+        - $ref: "#/components/schemas/DevicePo"
+        - type: object
+          required: [address, statusHistory]
+          properties:
+            address: { $ref: "#/components/schemas/DeliveryAddress" }
+            statusHistory:
+              type: array
+              items: { $ref: "#/components/schemas/StatusHistoryEntry" }
+
+    AttachBundlesBody:
+      type: object
+      required: [msisdns]
+      properties:
+        msisdns:
+          type: array
+          minItems: 1
+          maxItems: 100000
+          items: { type: string }
+
+    AttachBundlesValidation:
+      type: object
+      required: [ok, expected, received, accepted]
+      properties:
+        ok:       { type: boolean }
+        expected: { type: integer, description: The order's qty. }
+        received: { type: integer }
+        accepted:
+          type: array
+          items: { type: string }
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              value: { type: string }
+              issue: { type: string }
+
+    AttachBundlesResult:
+      type: object
+      required: [devicePoId, status, attached]
+      properties:
+        devicePoId: { type: string, format: uuid }
+        status:     { $ref: "#/components/schemas/DevicePoStatus" }
+        attached:   { type: integer }
+
+    Bundle:
+      type: object
+      description: A paired MSISDN+IMEI unit.
+      required: [msisdn, status]
+      properties:
+        msisdn: { type: string }
+        imei:
+          oneOf:
+            - type: string
+            - type: "null"
+        deviceModelCode: { type: string }
+        brandCode:       { type: string }
+        status:          { type: string, examples: ["ASSIGNED"] }
+        pairedAt:        { type: string, format: date-time }
+        receivedAt:      { type: string, format: date-time }
+
+    CallPlan:
+      type: object
+      required: [callPlanId, code, name, kind]
+      properties:
+        callPlanId: { type: string, format: uuid }
+        code:       { type: string, examples: ["DATA_50GB", "SALDO_MOBO"] }
+        name:       { type: string, examples: ["50 GB", "Saldo Mobo"] }
+        kind:
+          type: string
+          enum: [DATA, BALANCE]
+          description: BALANCE products carry no quota.
+        quotaGb:
+          type: integer
+          description: Present only when `kind` is `DATA`.
+          examples: [50]
+        sortOrder: { type: integer }
+
+    Brand:
+      type: object
+      required: [code, displayName, outletName]
+      properties:
+        code:        { type: string, examples: ["IM3", "3ID"] }
+        displayName: { type: string, examples: ["IM3"] }
+        outletName:  { type: string, examples: ["Gerai IM3"] }
+        sortOrder:   { type: integer }
+
+    DevicePartnerRef:
+      type: object
+      required: [devicePartnerId, code, name]
+      properties:
+        devicePartnerId: { type: string, format: uuid }
+        code:            { type: string, examples: ["ADVAN"] }
+        name:            { type: string, examples: ["ADVAN"] }
+
+    MpxRef:
+      type: object
+      required: [mpxId, code, name]
+      properties:
+        mpxId:     { type: string, format: uuid }
+        code:      { type: string, examples: ["MPX-BKL-01"] }
+        name:      { type: string, examples: ["MPX Bengkulu"] }
+        legalName: { type: string, examples: ["PT Internet Rakyat Makmur"] }
+        circle:
+          type: string
+          enum: [JAVA, KALISUMAPA, SUMATERA]
+        regionCode: { type: string, examples: ["BENGKULU"] }
+
+    DeviceModelRef:
+      type: object
+      required: [deviceModelId, modelCode, isActive]
+      properties:
+        deviceModelId: { type: string, format: uuid }
+        modelCode:     { type: string, examples: ["ADVAN V1 PRO"] }
+        brand:
+          type: string
+          description: Hardware manufacturer, not the telco brand.
+          examples: ["ADVAN"]
+        sku:           { type: string, examples: ["SKU-ADV-V1P"] }
+        networkGeneration:
+          type: string
+          enum: ["4G", "5G"]
+          description: Absent when the model has not been categorised.
+        devicePartner:
+          $ref: "#/components/schemas/DevicePartnerRef"
+        listPriceIdr:
+          description: |
+            Whole rupiah, or **null** when the model has no confirmed price. A model
+            with a null price cannot be ordered.
+          oneOf:
+            - type: integer
+            - type: "null"
+          examples: [390000]
+        imageUrl: { type: string }
+        isActive: { type: boolean }
+
+    AdminAuthTokens:
+      type: object
+      properties:
+        accessToken:  { type: string }
+        refreshToken: { type: string }
+        expiresIn:
+          type: integer
+          description: Access-token lifetime in seconds.
+          examples: [900]
+        mustChangePassword:
+          type: boolean
+          description: True on first login with an HQ-issued password.
+        profile: { $ref: "#/components/schemas/AdminProfile" }
+
+    AdminProfile:
+      type: object
+      description: |
+        The signed-in dashboard user. `role` plus `organisation` is the entire
+        authorisation context — the client never sends either back, and no admin
+        endpoint accepts a `devicePartnerId` or `mpxId` filter that would widen
+        access beyond this binding.
+      required: [adminUserId, username, fullName, role, status]
+      properties:
+        adminUserId: { type: string, format: uuid }
+        username:    { type: string, examples: ["dp.advan"] }
+        email:       { type: string, format: email }
+        fullName:
+          type: string
+          description: |
+            Rendered verbatim into every attestation checkbox
+            ("Saya, Atha Marcella, mengonfirmasi bahwa…") and recorded as the
+            `oleh` column of each status-history row. Never hardcoded client-side.
+          examples: ["Atha Marcella"]
+        role:
+          type: string
+          enum: [DP_ADMIN, IOH_ADMIN, MPX_ADMIN]
+        organisation:
+          description: |
+            The single counterparty this principal is bound to. `null` for
+            `IOH_ADMIN`, which is global-read by design.
+          oneOf:
+            - $ref: "#/components/schemas/AdminOrganisation"
+            - type: "null"
+        status:
+          type: string
+          enum: [ACTIVE, SUSPENDED, INACTIVE]
+
+    AdminOrganisation:
+      type: object
+      required: [type, id, code, name]
+      properties:
+        type:
+          type: string
+          enum: [DEVICE_PARTNER, MPX]
+        id:   { type: string, format: uuid }
+        code:
+          type: string
+          description: |
+            For a Device Partner this is the prefix of every MSISDN PO number it
+            raises (`ADVAN-20250523-207`). For an MPX it is the canonical
+            `MPX-<AREA>-<NN>` identifier.
+          examples: ["ADVAN", "MPX-BKL-01"]
+        name: { type: string, examples: ["ADVAN", "MPX Bengkulu"] }
+        legalName:
+          type: string
+          description: MPX only. Shown under the user name in the topbar.
+          examples: ["PT Internet Rakyat Makmur"]
+        circle:
+          type: string
+          description: MPX only.
+          enum: [JAVA, KALISUMAPA, SUMATERA]
 
     AccountExecutive:
       type: object
